@@ -1,0 +1,46 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "dnd-vtt",
+  "version": "0.1.8",
+  "identifier": "com.dndvision.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "https://dnd-vtt-app-b6d34.web.app",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "dnd-vtt",
+        "width": 800,
+        "height": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://dnd-vtt-app-b6d34.web.app/update.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFM0FGOUQ0Q0RDNDdFM0MKUldROGZzVE4xUGs2VHB4bzhpa3VNdFN0RVBGQkZacVFGMHdFM0t1M2FwSEN3S2dNOFRkL2w5QmwK",
+      "dialog": true
+    }
+  }}
+
