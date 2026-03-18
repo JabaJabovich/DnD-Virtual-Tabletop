@@ -35,6 +35,7 @@ import { generateId, getUserColor, DELETE_FIELD, rollSound } from './utils/helpe
 import { socket, SERVER_URL, uploadCanvasToStorage } from './services/socket';
 import { useAuth } from './hooks/useAuth';
 import { useTokens } from './hooks/useTokens';
+import { useMap } from './hooks/useMap';
 
 
 export default function App() {
@@ -123,34 +124,9 @@ export default function App() {
   const [shareType, setShareType] = useState('image'); 
   const [shareContent, setShareContent] = useState('');
   const [shareTargets, setShareTargets] = useState(['all']);
-  const [dismissedMediaId, setDismissedMediaId] = useState(null);
-
-  const [activeTool, setActiveTool] = useState('pointer'); 
-  const [measureData, setMeasureData] = useState(null);
-  const [wallDrawData, setWallDrawData] = useState(null);
-  const [templateDrawData, setTemplateDrawData] = useState(null); 
+  const [dismissedMediaId, setDismissedMediaId] = useState(null); 
   const [isPotatoMode, setIsPotatoMode] = useState(false);
-  // === НОВОЕ: ПОЛНОЭКРАННЫЙ РЕЖИМ ===
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
-  useEffect(() => {
-      const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
-      document.addEventListener('fullscreenchange', handleFullscreenChange);
-      return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
-
-  const toggleFullscreen = () => {
-      if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {});
-      } else {
-          if (document.exitFullscreen) document.exitFullscreen();
-      }
-  };
-
-  const [scale, setScale] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [startPan, setStartPan] = useState({ x: 0, y: 0 });
   
   const [gmMode, setGmMode] = useState(true);
   
@@ -193,7 +169,13 @@ export default function App() {
   
   const [draggingWidget, setDraggingWidget] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [draggingTemplate, setDraggingTemplate] = useState(null);
+
+  const {
+    scale, setScale, pan, setPan, isPanning, setIsPanning, startPan, setStartPan,
+    activeTool, setActiveTool, measureData, setMeasureData,
+    wallDrawData, setWallDrawData, templateDrawData, setTemplateDrawData,
+    draggingTemplate, setDraggingTemplate, isFullscreen, toggleFullscreen, handleWheel
+  } = useMap();
 
   const handleTemplatePointerDown = useCallback((e, id) => {
       e.stopPropagation();
@@ -413,6 +395,8 @@ export default function App() {
     (action) => combatSelectionRef.current && combatSelectionRef.current(action), // Безопасная передача!
     containerRef, pan, scale, isFogEnabled, setDiceToasts
   );
+
+  
 
   const selectedToken = localTokens.find(t => t.id === selectedTokenId);
   const canEditSelected = selectedToken && (userRole === 'gm' || selectedToken.id === myTokenId);
@@ -1260,25 +1244,8 @@ export default function App() {
     activeTool, draggingTokenId, draggingWidget, draggingTemplate,
     handlePointerMoveBg, handlePointerUpBg
   ]);
-  const handleWheel = (e) => {
-    if (e.target.closest('aside') || e.target.closest('.no-zoom') || portraitToShow) return;
-    if (!containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left; 
-    const mouseY = e.clientY - rect.top;
-
-    const mapX = (mouseX - pan.x) / scale;
-    const mapY = (mouseY - pan.y) / scale;
-
-    const newScale = Math.min(Math.max(0.1, scale - e.deltaY * 0.001), 5);
-
-    setPan({
-        x: mouseX - mapX * newScale,
-        y: mouseY - mapY * newScale
-    });
-    setScale(newScale);
-  };
+  // Обертка для зума
+  const onMapWheel = (e) => handleWheel(e, containerRef, portraitToShow);
   const handleContextMenuMap = (e) => {
     e.preventDefault();
     
@@ -1807,7 +1774,7 @@ return nextState;
             setPendingDamageTarget={setPendingDamageTarget} localTokens={localTokens} diceCount={diceCount} setDiceCount={setDiceCount} rollDice={rollDice} sessionData={sessionData}
           />
           <MapBoard 
-            mapApiRef={mapApiRef} containerRef={containerRef} hideLocalGrid={hideLocalGrid} activeTool={activeTool} isPanning={isPanning} handleWheel={handleWheel} handlePointerDownBg={handlePointerDownBg} handleContextMenuMap={handleContextMenuMap}
+            mapApiRef={mapApiRef} containerRef={containerRef} hideLocalGrid={hideLocalGrid} activeTool={activeTool} isPanning={isPanning} handleWheel={onMapWheel} handlePointerDownBg={handlePointerDownBg} handleContextMenuMap={handleContextMenuMap}
             measureData={measureData} setMeasureData={setMeasureData} sessionData={sessionData} pan={pan} scale={scale} setScale={setScale} setPan={setPan} updateSession={updateSession}
             localTokens={localTokens} isTokenVisible={isTokenVisible} userRole={userRole} templateDrawData={templateDrawData} removeTemplate={removeTemplate}
             myTokenId={myTokenId} selectedTokenId={selectedTokenId} draggingTokenId={draggingTokenId} handleTokenPointerDown={handleTokenPointerDown} dragPath={dragPath}
