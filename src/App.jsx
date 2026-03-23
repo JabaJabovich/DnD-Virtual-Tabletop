@@ -13,6 +13,8 @@ import {
 import { useDiceEngine } from './hooks/useDiceEngine';
 import { useChat } from './hooks/useChat';
 import { useCombat } from './hooks/useCombat';
+import { useMapInteractions } from './hooks/useMapInteractions';
+
 
 import AuthScreen from './AuthScreen';
 import ProfileScreen from './ProfileScreen';
@@ -36,6 +38,7 @@ import { useAuth } from './hooks/useAuth';
 import { useTokens } from './hooks/useTokens';
 import { useMap } from './hooks/useMap';
 import { useSession } from './providers/SessionProvider';
+import { useSessionsAndScenes } from './hooks/useSessionsAndScenes';
 
 
 
@@ -85,7 +88,6 @@ export default function App() {
   const mapApiRef = useRef(null);
   
   // Временное хранилище координат токена во время перетаскивания (чтобы не дергать state)
-  const draggedTokenPosRef = useRef(null);
   const [localVideoUrl, setLocalVideoUrl] = useState('');
   const [localVolume, setLocalVolume] = useState(20); 
   const [hideLocalGrid, setHideLocalGrid] = useState(false);
@@ -161,6 +163,96 @@ export default function App() {
     draggingTemplate, setDraggingTemplate, isFullscreen, toggleFullscreen, handleWheel
   } = useMap();
 
+  const {
+  syncWallsRef,
+  handleTokenPointerDown,
+  handlePointerDownBg,
+  handlePointerMoveBg,
+  handlePointerUpBg,
+  handleWidgetPointerDown,
+} = useMapInteractions({
+  activeSessionId,
+  sessionData,
+  updateSession,
+  localTokens,
+  setLocalTokens,
+  userRole,
+  myTokenId,
+
+  activeTool,
+  portraitToShow,
+  isTokenVisible,
+  measureData,
+  setMeasureData,
+  wallDrawData,
+  setWallDrawData,
+  templateDrawData,
+  setTemplateDrawData,
+
+  pan,
+  setPan,
+  scale,
+  isPanning,
+  setIsPanning,
+  startPan,
+  setStartPan,
+
+  setSelectedTokenId,
+  setHpInputValue,
+  draggingTokenId,
+  setDraggingTokenId,
+  setIsTokenPanelOpen,
+  setIsTokenPanelMinimized,
+
+  draggingWidget,
+  setDraggingWidget,
+  dragOffset,
+  setDragOffset,
+  setWidgetPositions,
+
+  containerRef,
+  mapApiRef,
+});
+const {
+  handleLeaveSession,
+  handleDropToLobby,
+  leaveLobby,
+  createSession,
+  deleteSession,
+  joinSession,
+  startGameAsGM,
+  stopGameAsGM,
+  saveScene,
+  loadScene,
+  deleteScene,
+} = useSessionsAndScenes({
+  sessionData,
+  updateSession,
+  allScenes,
+  activeSessionId,
+  currentUser,
+  activeCharacter,
+  loginHp,
+  userRole,
+  setActiveSessionId,
+  setAuthStep,
+  setGmMode,
+  setMyTokenId,
+  setSelectedTokenId,
+  setShowStatsWidget,
+  setShowInvWidget,
+  setShowAbilWidget,
+  setShowAtkWidget,
+  setCombatSelection,
+  setIsTokenPanelOpen,
+  setScale,
+  setPan,
+  hasCenteredRef,
+  newSessionName,
+  setNewSessionName,
+});
+
+
   const handleTemplatePointerDown = useCallback((e, id) => {
       e.stopPropagation();
       if (!containerRef.current) return;
@@ -184,15 +276,9 @@ export default function App() {
   const appWrapperRef = useRef(null); 
   const ytPlayerRef = useRef(null);
   const containerRef = useRef(null);
-  const lastTapRef = useRef({ id: null, time: 0 });
-  const hasCenteredRef = useRef(false);
-  const lastSyncRef = useRef(0); 
+  const hasCenteredRef = useRef(false); 
   const stateRefs = useRef({ authStep, userRole, currentUser, draggingTokenId: null });
-  const dragStartPosRef = useRef(null);
-  const lastValidPosRef = useRef(null); 
   const recentBroadcastsRef = useRef({}); 
-  const wallsRef = useRef([]);
-  const moveRequestRef = useRef(null);
   const polyCalcTimersRef = useRef({}); 
 
 // ... твои другие стейты
@@ -211,9 +297,10 @@ export default function App() {
   // 2. Умная обертка для бросков (с поддержкой Fallback и 2D-режима)
   
 
-  useEffect(() => { 
-      wallsRef.current = sessionData.walls || []; 
-  }, [sessionData.walls]);      
+  useEffect(() => {
+  syncWallsRef(sessionData.walls || []);
+}, [sessionData.walls, syncWallsRef]);
+    
   
   const isFogEnabled = sessionData.fogEnabled ?? true;
 
@@ -303,745 +390,8 @@ export default function App() {
 
 
 
-  const handleLeaveSession = () => {
-    setActiveSessionId(null); 
-    setMyTokenId(null); 
-    setSelectedTokenId(null); 
-    setAuthStep('sessions'); 
-    setGmMode(false);
-    setShowStatsWidget(false); 
-    setShowInvWidget(false); 
-    setShowAbilWidget(false); 
-    setShowAtkWidget(false); 
-    setCombatSelection([]); 
-    setIsTokenPanelOpen(false); 
-    hasCenteredRef.current = false;
-  };
+  
 
-  const handleDropToLobby = () => {
-    setMyTokenId(null); 
-    setSelectedTokenId(null); 
-    setAuthStep('lobby_wait');
-    setShowStatsWidget(false); 
-    setShowInvWidget(false); 
-    setShowAbilWidget(false); 
-    setShowAtkWidget(false); 
-    setCombatSelection([]); 
-    setIsTokenPanelOpen(false); 
-    hasCenteredRef.current = false;
-  };
-
-  const leaveLobby = () => {
-      if (userRole === 'player' && activeSessionId) {
-          socket.emit('get_session', activeSessionId, (dbSess) => {
-             const filtered = (dbSess.readyPlayers || []).filter(p => !(p.accountId === currentUser.id && p.characterId === activeCharId));
-             socket.emit('update_session', { sessionId: activeSessionId, updates: { readyPlayers: filtered } });
-          });
-      }
-      handleLeaveSession();
-  };
-
-
- const createSession = (e) => {
-    e.preventDefault();
-    if (!newSessionName.trim()) return;
-    
-    const newSession = {
-      id: generateId(),
-      name: newSessionName,
-      createdAt: Date.now(),
-      isGameStarted: false,
-      mapConfig: null,
-      gridConfig: { enabled: false, size: 60, color: '#ffffff', opacity: 0.3 }, 
-      tokens: {},
-      walls: [],
-      templates: [],
-      diceLog: [],
-      chatMessages: [],
-      chatReadStates: {},
-      pings: [],
-      readyPlayers: [],
-      fogEnabled: true,
-      combatState: { isActive: false, order: [], currentTurnIndex: 0 },
-      bgMusic: { videoId: null, isPlaying: false },
-      lighting: 'day'
-    };
-    
-    socket.emit('create_session', newSession);
-    setNewSessionName('');
-  };
-
-  const deleteSession = (id) => { 
-      if(window.confirm('Вы уверены, что хотите удалить эту сессию?')) {
-          socket.emit('delete_session', id); 
-      }
-  };
-
-  const joinSession = (id) => {
-    socket.emit('get_session', id, (currentSess) => {
-        if (!currentSess) return alert("Ошибка: Не удалось найти сессию.");
-
-        if (userRole === 'player') {
-          if (currentSess.isGameStarted) {
-             const existingTokenKey = Object.keys(currentSess.tokens || {}).find(k => currentSess.tokens[k].accountId === currentUser.id && currentSess.tokens[k].characterId === activeCharacter.id);
-             
-             const sessionUpdates = {};
-             Object.keys(currentSess.tokens || {}).forEach(k => { 
-                if (currentSess.tokens[k].accountId === currentUser.id && currentSess.tokens[k].characterId !== activeCharacter.id) { 
-                    sessionUpdates[`tokens.${k}`] = DELETE_FIELD; 
-                } 
-             });
-
-             let finalTokenId = null;
-             
-             if (existingTokenKey) {
-                 finalTokenId = existingTokenKey;
-                 sessionUpdates[`tokens.${finalTokenId}`] = { ...currentSess.tokens[existingTokenKey], name: activeCharacter.name || activeCharacter.username, color: activeCharacter.stats?.tokenColor || '#3b82f6', frame: activeCharacter.stats?.tokenFrame || 'solid', image: activeCharacter.image || null, ac: activeCharacter.ac || 10, stats: activeCharacter.stats };
-             } else {
-                 // Защита от пустой карты и undefined значений
-                 const mw = currentSess.mapConfig?.width ? Number(currentSess.mapConfig.width) : 800;
-                 const mh = currentSess.mapConfig?.height ? Number(currentSess.mapConfig.height) : 600;
-                 const startX = isNaN(mw) ? 400 : mw / 2; const startY = isNaN(mh) ? 300 : mh / 2;
-                 const safeHp = Number(loginHp) || 10;
-
-                 const newToken = { 
-                     id: generateId(), accountId: currentUser.id, characterId: activeCharacter.id, name: activeCharacter.name || activeCharacter.username, type: 'player', 
-                     color: activeCharacter.stats?.tokenColor || '#3b82f6', frame: activeCharacter.stats?.tokenFrame || 'solid', 
-                     x: startX, y: startY, size: 60, vision: 300, hp: safeHp, maxHp: safeHp, ac: activeCharacter.ac || 10, 
-                     image: activeCharacter.image || null, 
-                     stats: activeCharacter.stats || { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 }, 
-                     deathSaves: { successes: 0, failures: 0 }, statuses: [] 
-                 };
-                 finalTokenId = newToken.id; sessionUpdates[`tokens.${finalTokenId}`] = newToken;
-             }
-             
-             updateSession(sessionUpdates, id); 
-             setActiveSessionId(id); 
-             setMyTokenId(finalTokenId); 
-             setGmMode(false); 
-             setAuthStep('in_game');
-          } else {
-             const playerInfo = { id: generateId(), accountId: currentUser.id, characterId: activeCharacter.id, name: activeCharacter.name || activeCharacter.username, role: 'player', hp: Number(loginHp), ac: activeCharacter.ac || 10, tokenColor: activeCharacter.stats?.tokenColor || '#3b82f6', frame: activeCharacter.stats?.tokenFrame || 'solid', image: activeCharacter.image || null, stats: activeCharacter.stats };
-             const filtered = (currentSess.readyPlayers || []).filter(p => !(p.accountId === currentUser.id));
-             updateSession({ readyPlayers: [...filtered, playerInfo] }, id); 
-             setActiveSessionId(id); 
-             setGmMode(false); 
-             setAuthStep('lobby_wait');
-          }
-        } else {
-          setActiveSessionId(id); 
-          setGmMode(userRole === 'gm'); 
-          setAuthStep(currentSess.isGameStarted ? 'in_game' : 'lobby_wait');
-        }
-    });
-  };
-
-  const startGameAsGM = () => {
-    const mapW = sessionData.mapConfig?.width ? Number(sessionData.mapConfig.width) : 800; 
-    const mapH = sessionData.mapConfig?.height ? Number(sessionData.mapConfig.height) : 600;
-    const mw = isNaN(mapW) ? 800 : mapW;
-    const mh = isNaN(mapH) ? 600 : mapH;
-
-    const newTokensMap = { ...sessionData.tokens };
-    
-    (sessionData.readyPlayers || []).forEach((rp, i) => {
-       if (rp.role === 'player') {
-           const alreadyExists = Object.values(newTokensMap).some(t => t.accountId === rp.accountId && t.characterId === rp.characterId);
-           if (!alreadyExists) {
-               newTokensMap[rp.id] = { 
-                   id: rp.id, accountId: rp.accountId, characterId: rp.characterId, name: rp.name, type: 'player', color: rp.tokenColor || '#3b82f6', frame: rp.frame || 'solid', 
-                   x: (mw / 2) + ((i % 5) * 80) - 160, y: (mh / 2) + Math.floor(i / 5) * 80, size: 60, vision: 300, 
-                   hp: rp.hp || 10, maxHp: rp.hp || 10, ac: rp.ac || 10, 
-                   image: rp.image || null, 
-                   stats: rp.stats || { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 }, 
-                   deathSaves: { successes: 0, failures: 0 }, statuses: [] 
-               };
-           }
-       }
-    });
-    
-    updateSession({ isGameStarted: true, tokens: newTokensMap, readyPlayers: [] });
-    setAuthStep('in_game');
-  };
-
-  const stopGameAsGM = () => {
-    if (window.confirm("Вы уверены? Это вернет всех в лобби и ОЧИСТИТ текущую карту с токенами.")) {
-       updateSession({ isGameStarted: false, tokens: {}, walls: [], mapConfig: null, diceLog: [], readyPlayers: [], chatMessages: [], pings: [], combatState: { isActive: false, order: [], currentTurnIndex: 0 }, lighting: 'day' });
-       handleDropToLobby();
-    }
-  };
-
-  const saveScene = useCallback(() => {
-    const name = window.prompt("Название сцены (введите имя существующей для её перезаписи):");
-    if (!name) return;
-    
-    const existing = allScenes.find(s => s.sessionId === activeSessionId && s.name.toLowerCase() === name.trim().toLowerCase());
-    const sceneId = existing ? existing.id : generateId();
-    
-    const newScene = { 
-        id: sceneId, 
-        sessionId: activeSessionId, 
-        name: existing ? existing.name : name.trim(), 
-        mapConfig: sessionData.mapConfig || null, 
-        tokens: sessionData.tokens || {}, 
-        walls: sessionData.walls || [], 
-        fogEnabled: isFogEnabled, 
-        lighting: sessionData.lighting || 'day', 
-        createdAt: existing ? existing.createdAt : Date.now() 
-    };
-    
-    socket.emit('save_scene', newScene);
-    alert(existing ? "Сцена обновлена!" : "Новая сцена сохранена!");
-  }, [allScenes, activeSessionId, sessionData, isFogEnabled]);
-
-  const loadScene = (scene) => {
-    if (window.confirm(`Загрузить сцену "${scene.name}"?`)) {
-       const activePlayerTokens = Object.values(sessionData.tokens || {}).filter(t => t.accountId);
-       const sceneTokens = Object.values(scene.tokens || {}).filter(t => !t.accountId);
-       
-       // === ФИКС СПАВНА: Телепортируем игроков в центр загружаемой сцены ===
-       const mapW = scene.mapConfig?.width ? Number(scene.mapConfig.width) : 800;
-       const mapH = scene.mapConfig?.height ? Number(scene.mapConfig.height) : 600;
-       
-       activePlayerTokens.forEach((p, i) => {
-           p.x = (mapW / 2) + ((i % 5) * 80) - 160;
-           p.y = (mapH / 2) + Math.floor(i / 5) * 80;
-       });
-
-       const newTokensMap = {};
-       activePlayerTokens.forEach(p => newTokensMap[p.id] = p);
-       sceneTokens.forEach(t => newTokensMap[t.id] = t);
-       
-       updateSession({ mapConfig: scene.mapConfig || null, tokens: newTokensMap, walls: scene.walls || [], fogEnabled: scene.fogEnabled ?? true, lighting: scene.lighting || 'day', combatState: { isActive: false, order: [], currentTurnIndex: 0 }, pings: [] });
-       setScale(1); 
-       setPan({x:0, y:0});
-    }
-  };
-
-  // === ВСТАВЬ ЭТОТ БЛОК СРАЗУ ПОСЛЕ loadScene ===
-  const deleteScene = (sceneId) => { 
-      if (window.confirm("Удалить сцену навсегда?")) {
-          socket.emit('delete_scene', sceneId); 
-      }
-  };
-
-  const handleShare = () => {
-     updateSession({ sharedMedia: { id: Date.now(), type: shareType, content: shareContent, visibleTo: shareTargets.includes('all') ? 'all' : shareTargets } });
-     setIsShareModalOpen(false); 
-     setShareContent('');
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const playersOnly = {};
-    Object.values(sessionData.tokens || {}).forEach(t => {
-        if (t.accountId) {
-            playersOnly[t.id] = t; 
-        }
-    });
-
-    if (file.name.toLowerCase().endsWith('.dd2vtt')) {
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                const data = JSON.parse(event.target.result);
-                const ppi = data.resolution?.pixels_per_grid || 70;
-                const img = new Image();
-                img.onload = async () => {
-                    const canvas = document.createElement('canvas');
-                    let w = img.width; let h = img.height;
-                    // === ОПТИМИЗАЦИЯ ТЕКСТУРЫ (Безопасный лимит WebGL 2048) ===
-                    const max = 2048; let ratio = 1;
-                    if (w > max || h > max) { 
-                        ratio = Math.min(max/w, max/h); 
-                        w = Math.floor(w * ratio); 
-                        h = Math.floor(h * ratio); 
-                    }
-                    canvas.width = w; canvas.height = h;
-                    const ctx = canvas.getContext('2d'); 
-                    ctx.drawImage(img, 0, 0, w, h);
-                    const imageUrl = await uploadCanvasToStorage(canvas, 'maps');
-                    
-                    // === ФИКС СПАВНА: Собираем игроков в центре новой карты ===
-                    let playerIndex = 0;
-                    Object.values(playersOnly).forEach(p => {
-                        p.x = (w / 2) + ((playerIndex % 5) * 80) - 160;
-                        p.y = (h / 2) + Math.floor(playerIndex / 5) * 80;
-                        playerIndex++;
-                    });
-
-                    let newWalls = [];
-                    if (data.line_of_sight) {
-                        data.line_of_sight.forEach(path => {
-                            for (let i = 0; i < path.length - 1; i++) {
-                                newWalls.push({ id: generateId(), x1: path[i].x * ppi * ratio, y1: path[i].y * ppi * ratio, x2: path[i+1].x * ppi * ratio, y2: path[i+1].y * ppi * ratio });
-                            }
-                        });
-                    }
-                    if (data.portals) {
-                        data.portals.forEach(portal => {
-                            if (portal.closed && portal.bounds && portal.bounds.length > 1) {
-                                const path = portal.bounds;
-                                for (let i = 0; i < path.length - 1; i++) {
-                                    newWalls.push({ id: generateId(), x1: path[i].x * ppi * ratio, y1: path[i].y * ppi * ratio, x2: path[i+1].x * ppi * ratio, y2: path[i+1].y * ppi * ratio });
-                                }
-                            }
-                        });
-                    }
-                    newWalls.push(
-                        { id: generateId(), x1: 0, y1: 0, x2: w, y2: 0 }, { id: generateId(), x1: w, y1: 0, x2: w, y2: h }, 
-                        { id: generateId(), x1: w, y1: h, x2: 0, y2: h }, { id: generateId(), x1: 0, y1: h, x2: 0, y2: 0 }
-                    );
-
-                    const currentGrid = sessionData.gridConfig || {};
-                    updateSession({ 
-                        mapConfig: { src: imageUrl, width: w, height: h }, 
-                        walls: newWalls, tokens: playersOnly, 
-                        gridConfig: { enabled: true, size: Math.round(ppi * ratio), color: currentGrid.color || '#ffffff', opacity: currentGrid.opacity || 0.4, offsetX: 0, offsetY: 0 } 
-                    });
-                    setScale(1); setPan({ x: 0, y: 0 });
-                };
-                img.src = "data:image/png;base64," + data.image;
-            } catch (err) { alert("Не удалось загрузить файл dd2vtt."); }
-        };
-        reader.readAsText(file);
-    } else {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const img = new Image();
-          img.onload = async () => {
-             const canvas = document.createElement('canvas');
-             let w = img.width; let h = img.height;
-             const max = 2048; let ratio = 1; // Оптимизация текстуры
-             if (w > max || h > max) { ratio = Math.min(max/w, max/h); w = Math.floor(w * ratio); h = Math.floor(h * ratio); }
-             canvas.width = w; canvas.height = h;
-             const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
-             const imageUrl = await uploadCanvasToStorage(canvas, 'maps');
-             
-             // ФИКС СПАВНА
-             let playerIndex = 0;
-             Object.values(playersOnly).forEach(p => {
-                 p.x = (w / 2) + ((playerIndex % 5) * 80) - 160;
-                 p.y = (h / 2) + Math.floor(playerIndex / 5) * 80;
-                 playerIndex++;
-             });
-
-             const boundaryWalls = [ 
-                 { id: generateId(), x1: 0, y1: 0, x2: w, y2: 0 }, { id: generateId(), x1: w, y1: 0, x2: w, y2: h }, 
-                 { id: generateId(), x1: w, y1: h, x2: 0, y2: h }, { id: generateId(), x1: 0, y1: h, x2: 0, y2: 0 } 
-             ];
-             updateSession({ mapConfig: { src: imageUrl, width: w, height: h }, walls: boundaryWalls, tokens: playersOnly });
-             setScale(1); setPan({ x: 0, y: 0 });
-          };
-          img.src = event.target.result;
-        };
-        reader.readAsDataURL(file);
-    }
-    e.target.value = null;
-  };
-
-  const handleWidgetPointerDown = (e, widget) => {
-    e.stopPropagation();
-    const rect = e.currentTarget.parentElement.getBoundingClientRect();
-    setDraggingWidget(widget);
-    setDragOffset({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-  };
-
-// === 1. ЭТА ФУНКЦИЯ ДОЛЖНА ИДТИ ПЕРВОЙ ===
-  // === 1. ОБРАБОТЧИК ТОКЕНОВ ===
-  const handleTokenPointerDown = useCallback((e, id) => {
-    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-    
-    const now = Date.now(); 
-    // Безопасное чтение lastTap
-    const lastTap = lastTapRef.current || {};
-    const isDoubleTap = lastTap.id === id && (now - (lastTap.time || 0)) < 400;
-    
-    lastTapRef.current = { id, time: now };
-    setSelectedTokenId(id); 
-    setHpInputValue(''); 
-    
-    if (isDoubleTap) { setIsTokenPanelOpen(true); setIsTokenPanelMinimized(false); }
-    if (activeTool !== 'pointer') return; 
-    if (userRole === 'spectator') return; 
-    if (userRole === 'player' && id !== myTokenId) return; 
-    
-    const t = localTokens.find(tok => tok.id === id);
-    if (t) { 
-        dragStartPosRef.current = { x: t.x, y: t.y }; 
-        lastValidPosRef.current = { x: t.x, y: t.y }; 
-        setDragPath([{ x: t.x, y: t.y }]); 
-    }
-    setDraggingTokenId(id);
-  }, [activeTool, userRole, myTokenId, localTokens]);
-
-
-  // === 1. НАЖАТИЕ МЫШИ (СТАРТ) ===
-   // === 1. НАЖАТИЕ МЫШИ (СТАРТ) ===
-  const handlePointerDownBg = useCallback((e) => {
-    if (e.button === 2 || portraitToShow) return; 
-    if (!containerRef.current) return;
-    
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left - pan.x) / scale; 
-    const y = (e.clientY - rect.top - pan.y) / scale;
-    
-    // === НОВОЕ: СТАРТ РИСОВАНИЯ ШАБЛОНА ===
-    // === СТАРТ РИСОВАНИЯ ШАБЛОНА ===
-    if (activeTool.startsWith('template-')) {
-        setTemplateDrawData({ 
-            type: activeTool.replace('template-', ''), 
-            startX: x, startY: y, 
-            currentX: x, currentY: y 
-        });
-        return;
-    }
-    
-    // Рисование стен (Только для ГМ)
-    if (userRole === 'gm') {
-        if (activeTool === 'wall-line' || activeTool === 'wall-brush') {
-            setWallDrawData({ points: [{x, y}] }); 
-            return;
-        }
-    }
-
-    if (activeTool === 'ruler') { 
-        setMeasureData({ points: [{x, y}], current: {x, y} }); 
-        return; 
-    }
-    
-    // Выбор токена
-    if (activeTool === 'pointer') {
-        const tokens = Array.isArray(localTokens) ? localTokens : [];
-        const clickedToken = [...tokens].reverse().find(t => {
-            if (!isTokenVisible(t)) return false;
-            const hitRadius = (Number(t.size) || 60) / 2 + (20 / scale); 
-            return Math.hypot(t.x - x, t.y - y) <= hitRadius;
-        });
-        
-        if (clickedToken) { 
-            const now = Date.now(); 
-            const lastTap = lastTapRef.current || {};
-            const isDoubleTap = lastTap.id === clickedToken.id && (now - (lastTap.time || 0)) < 400;
-            lastTapRef.current = { id: clickedToken.id, time: now };
-            
-            setSelectedTokenId(clickedToken.id); 
-            
-            if (userRole === 'player' && clickedToken.id !== myTokenId) return;
-            
-            dragStartPosRef.current = { 
-                tokenX: clickedToken.x, 
-                tokenY: clickedToken.y, 
-                cursorX: x, 
-                cursorY: y 
-            }; 
-            draggedTokenPosRef.current = { x: clickedToken.x, y: clickedToken.y };
-            setDraggingTokenId(clickedToken.id);
-            
-            if (isDoubleTap) { setIsTokenPanelOpen(true); setIsTokenPanelMinimized(false); }
-            return; 
-        }
-    }
-    
-    // Если кликнули в пустоту — двигаем карту
-    if (activeTool !== 'wall-eraser') {
-        setSelectedTokenId(null); 
-        setIsTokenPanelOpen(false); 
-        setIsPanning(true); 
-        setStartPan({ x: e.clientX - pan.x, y: e.clientY - pan.y }); 
-    }
-  }, [pan, scale, activeTool, portraitToShow, userRole, localTokens, myTokenId, isTokenVisible]);
-
- const handlePointerMoveBg = useCallback((e) => { 
-    // === 1. ИДЕАЛЬНО ПЛАВНОЕ ДВИЖЕНИЕ ВИДЖЕТОВ (Синхронизация с монитором) ===
-    if (draggingWidget) {
-        // Если браузер еще не успел нарисовать прошлый кадр — отменяем его, чтобы не создавать "пробку"
-        if (moveRequestRef.current) cancelAnimationFrame(moveRequestRef.current);
-        
-        // Запрашиваем отрисовку строго в момент обновления экрана
-        moveRequestRef.current = requestAnimationFrame(() => {
-            setWidgetPositions(prev => ({
-                ...prev,
-                [draggingWidget]: { x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y }
-            }));
-        });
-        return;
-    }
-    if (draggingTemplate) {
-        const deltaX = x - draggingTemplate.startCursorX;
-        const deltaY = y - draggingTemplate.startCursorY;
-        setDraggingTemplate(prev => ({
-            ...prev,
-            x: prev.origX + deltaX,
-            y: prev.origY + deltaY,
-            targetX: prev.origTargetX + deltaX,
-            targetY: prev.origTargetY + deltaY
-        }));
-        return;
-    }
-    
-   if (!isPanning && !draggingTokenId && !measureData && !wallDrawData && !templateDrawData && activeTool !== 'wall-eraser') return;
-    if (!containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left - pan.x) / scale; 
-    const y = (e.clientY - rect.top - pan.y) / scale;
-
-    
-
-    // === НОВОЕ: РАСТЯГИВАНИЕ ШАБЛОНА ===
-    if (templateDrawData) {
-        setTemplateDrawData(prev => prev ? { ...prev, currentX: x, currentY: y } : null);
-        return;
-    }
-
-    // Перемещение токена
-    // Перемещение токена
-    if (draggingTokenId) {
-        const start = dragStartPosRef.current;
-        if (!start) return;
-
-        let targetX = start.tokenX + (x - start.cursorX);
-        let targetY = start.tokenY + (y - start.cursorY);
-        
-        // === 1. ЖЕЛЕЗОБЕТОННАЯ ЗАЩИТА ОТ ВЫЛЕТА ===
-        if (isNaN(targetX) || isNaN(targetY)) return;
-
-        // Определяем границы карты и размер токена
-        const mapW = sessionData?.mapConfig?.width ? Number(sessionData.mapConfig.width) : 2000;
-        const mapH = sessionData?.mapConfig?.height ? Number(sessionData.mapConfig.height) : 2000;
-        const tokenRadius = (localTokens.find(t => t.id === draggingTokenId)?.size || 60) / 2;
-
-        // ГМ ходит сквозь стены, игроки врезаются
-        if (userRole !== 'gm') {
-            const walls = wallsRef.current || [];
-            
-            let currentX = draggedTokenPosRef.current ? draggedTokenPosRef.current.x : start.tokenX;
-            let currentY = draggedTokenPosRef.current ? draggedTokenPosRef.current.y : start.tokenY;
-
-            let dx = targetX - currentX;
-            let dy = targetY - currentY;
-            let dist = Math.hypot(dx, dy);
-
-            // Физика столкновений
-            if (dist > 0) {
-                // Защита от зависания при гигантском рывке мышью: максимум 100 шагов физики
-                let steps = Math.min(100, Math.ceil(dist / (tokenRadius * 0.5))); 
-                let stepX = dx / steps;
-                let stepY = dy / steps;
-
-                let simX = currentX;
-                let simY = currentY;
-
-                const collisionBuffer = tokenRadius + 50; 
-                
-                const minBoxX = Math.min(currentX, targetX) - collisionBuffer;
-                const maxBoxX = Math.max(currentX, targetX) + collisionBuffer;
-                const minBoxY = Math.min(currentY, targetY) - collisionBuffer;
-                const maxBoxY = Math.max(currentY, targetY) + collisionBuffer;
-
-                const localWalls = walls.filter(w => {
-                    return !(Math.max(w.x1, w.x2) < minBoxX || Math.min(w.x1, w.x2) > maxBoxX ||
-                             Math.max(w.y1, w.y2) < minBoxY || Math.min(w.y1, w.y2) > maxBoxY);
-                });
-
-                for (let i = 0; i < steps; i++) {
-                    simX += stepX;
-                    simY += stepY;
-
-                    for (let iter = 0; iter < 3; iter++) { 
-                        for (const wall of localWalls) {
-                            const v = { x: wall.x1, y: wall.y1 };
-                            const w = { x: wall.x2, y: wall.y2 };
-                            const l2 = (w.x - v.x)**2 + (w.y - v.y)**2;
-                            let t = Math.max(0, Math.min(1, l2 === 0 ? 0 : ((simX - v.x) * (w.x - v.x) + (simY - v.y) * (w.y - v.y)) / l2));
-                            
-                            const closestX = v.x + t * (w.x - v.x);
-                            const closestY = v.y + t * (w.y - v.y);
-                            
-                            const d = Math.hypot(simX - closestX, simY - closestY);
-                            
-                            if (d > 0 && d < tokenRadius) {
-                                const overlap = tokenRadius - d;
-                                simX += ((simX - closestX) / d) * overlap;
-                                simY += ((simY - closestY) / d) * overlap;
-                            }
-                        }
-                    }
-                }
-                targetX = simX;
-                targetY = simY;
-            }
-        }
-
-        // === 2. МЯГКАЯ ПРУЖИНА (Не даем вылететь за края карты) ===
-        targetX = Math.max(tokenRadius, Math.min(mapW - tokenRadius, targetX));
-        targetY = Math.max(tokenRadius, Math.min(mapH - tokenRadius, targetY));
-
-        // === 3. КОНТРОЛЬНЫЙ ПРЕДОХРАНИТЕЛЬ ===
-        if (isNaN(targetX) || isNaN(targetY)) {
-             targetX = start.tokenX;
-             targetY = start.tokenY;
-        }
-
-        if (mapApiRef.current && mapApiRef.current.moveTokenVisual) {
-            mapApiRef.current.moveTokenVisual(draggingTokenId, targetX, targetY);
-        }
-        draggedTokenPosRef.current = { x: targetX, y: targetY };
-
-        // ОТПРАВКА ДВИЖЕНИЯ В РЕАЛЬНОМ ВРЕМЕНИ
-        const now = Date.now();
-        if (now - lastSyncRef.current > 40) { 
-            lastSyncRef.current = now;
-            
-            const currentToken = localTokens.find(t => t.id === draggingTokenId);
-            const poly = currentToken ? currentToken.fovPolygon : null;
-
-            const payload = { id: draggingTokenId, x: targetX, y: targetY, fovPolygon: poly };
-
-            if (socket.volatile) {
-                socket.volatile.emit('broadcast', { sessionId: activeSessionId, event: 'token_move', payload });
-            } else {
-                socket.emit('broadcast', { sessionId: activeSessionId, event: 'token_move', payload });
-            }
-        }
-
-        return; 
-    }
-
-    // Движение карты
-    if (isPanning) { 
-        setPan({ x: e.clientX - startPan.x, y: e.clientY - startPan.y }); 
-        return; 
-    } 
-    
-    // Линейка
-    if (measureData && activeTool === 'ruler') {
-        setMeasureData(prev => prev ? { ...prev, current: {x, y} } : null);
-        return;
-    } 
-    
-    // Отрисовка стен
-    if (wallDrawData && userRole === 'gm') {
-        if (activeTool === 'wall-line') {
-            setWallDrawData(prev => ({ points: [prev.points[0], {x, y}] }));
-        } else if (activeTool === 'wall-brush') {
-            const lastPt = wallDrawData.points[wallDrawData.points.length - 1];
-            if (Math.hypot(x - lastPt.x, y - lastPt.y) > 20 / scale) {
-                setWallDrawData(prev => ({ points: [...prev.points, {x, y}] }));
-            }
-        }
-        return;
-    } 
-    
-    // Ластик для стен
-    if (activeTool === 'wall-eraser' && e.buttons === 1 && userRole === 'gm') {
-        const hit = wallsRef.current.find(w => distToSegment({x, y}, {x: w.x1, y: w.y1}, {x: w.x2, y: w.y2}) < 15 / scale);
-        if (hit) {
-            const newWalls = wallsRef.current.filter(w => w.id !== hit.id);
-            wallsRef.current = newWalls; 
-            updateSession({ walls: newWalls });
-            setLocalTokens(prev => prev.map(t => ({ ...t, fovPolygon: null })));
-        }
-    }
-  }, [isPanning, startPan, measureData, activeTool, scale, pan, wallDrawData, userRole, updateSession, draggingTokenId, localTokens, draggingWidget, dragOffset, templateDrawData, activeSessionId]); // <--- ИСПРАВЛЕНИЕ: Добавлен activeSessionId в зависимости
-  const handlePointerUpBg = useCallback((e) => { 
-    // === НОВОЕ: СОХРАНЕНИЕ ШАБЛОНА ===
-    // === НОВОЕ: СОХРАНЕНИЕ ШАБЛОНА ===
-    if (templateDrawData) {
-        const dist = Math.hypot(templateDrawData.currentX - templateDrawData.startX, templateDrawData.currentY - templateDrawData.startY);
-        // Сохраняем, только если потянули мышь (больше 10 пикселей)
-        if (dist > 10 / scale) {
-            const newTemplate = {
-                id: generateId(),
-                type: templateDrawData.type,
-                x: templateDrawData.startX,
-                y: templateDrawData.startY,
-                targetX: templateDrawData.currentX,
-                targetY: templateDrawData.currentY,
-                color: activeWidgetCharacter?.stats?.tokenColor || '#a855f7'
-            };
-            const currentTemplates = sessionData.templates || [];
-            updateSession({ templates: [...currentTemplates, newTemplate] });
-        }
-        setTemplateDrawData(null);
-    }
-    // === 2. Сброс перетаскивания ===
-    if (draggingWidget) {
-        setDraggingWidget(null);
-        return;
-    }
-
-    if (draggingTemplate) {
-        const newTemplates = (sessionData.templates || []).map(t =>
-            t.id === draggingTemplate.id ? {
-                ...t,
-                x: draggingTemplate.x,
-                y: draggingTemplate.y,
-                targetX: draggingTemplate.targetX,
-                targetY: draggingTemplate.targetY
-            } : t
-        );
-        updateSession({ templates: newTemplates });
-        setDraggingTemplate(null);
-        return;
-    }
-
-    if (draggingTokenId) {
-        if (draggedTokenPosRef.current) {
-            let { x, y } = draggedTokenPosRef.current;
-            
-            // === ЗАЩИТА ПРИ СОХРАНЕНИИ (Сброс на начальную позицию при ошибке) ===
-            if (isNaN(x) || isNaN(y)) {
-                x = dragStartPosRef.current?.tokenX || 100;
-                y = dragStartPosRef.current?.tokenY || 100;
-            }
-
-            if (mapApiRef.current && mapApiRef.current.clearVisualPos) {
-                mapApiRef.current.clearVisualPos(draggingTokenId);
-            }
-            setLocalTokens(prev => prev.map(t => t.id === draggingTokenId ? { ...t, x, y, fovPolygon: null } : t));
-            updateSession({ [`tokens.${draggingTokenId}.x`]: x, [`tokens.${draggingTokenId}.y`]: y });
-            draggedTokenPosRef.current = null;
-        }
-        setDraggingTokenId(null);
-    }
-
-    setIsPanning(false); 
-    setMeasureData(null); 
-    
-    // Сохранение стен в БД
-    if (wallDrawData && userRole === 'gm') {
-        if (wallDrawData.points.length > 1) {
-            const newWalls = [];
-            const pts = wallDrawData.points;
-            for (let i = 0; i < pts.length - 1; i++) {
-                newWalls.push({ id: generateId(), x1: pts[i].x, y1: pts[i].y, x2: pts[i+1].x, y2: pts[i+1].y });
-            }
-            const updatedWalls = [...wallsRef.current, ...newWalls];
-            wallsRef.current = updatedWalls; 
-            updateSession({ walls: updatedWalls });
-            setLocalTokens(prev => prev.map(t => ({ ...t, fovPolygon: null })));
-        }
-        setWallDrawData(null);
-    }
-    
-    try { e.currentTarget?.releasePointerCapture(e.pointerId); } catch(err){}
-  }, [
-    wallDrawData, 
-    updateSession, 
-    draggingTokenId, 
-    userRole, 
-    draggingWidget, 
-    templateDrawData, // <--- ДОБАВИТЬ
-    scale,            // <--- ДОБАВИТЬ
-    sessionData,      // <--- ДОБАВИТЬ
-    activeWidgetCharacter // <--- ДОБАВИТЬ
-  ]);
 
   // === ГЛАВНЫЙ И ЕДИНСТВЕННЫЙ КОНТРОЛЛЕР МЫШИ ===
   // === ГЛАВНЫЙ И ЕДИНСТВЕННЫЙ КОНТРОЛЛЕР МЫШИ ===
