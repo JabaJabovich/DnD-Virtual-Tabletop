@@ -10,8 +10,7 @@ import {
   BookOpen, FileText, Music
 } from 'lucide-react';
 
-
-import DiceBox from '@3d-dice/dice-box';
+import { useDiceEngine } from './hooks/useDiceEngine';
 import { useChat } from './hooks/useChat';
 import { useCombat } from './hooks/useCombat';
 
@@ -54,6 +53,12 @@ export default function App() {
   } = useSession();
 
   const [newSessionName, setNewSessionName] = useState('');
+  const { rollDice, enable3DDice, setEnable3DDice } = useDiceEngine(
+  activeSessionId,
+  currentUser,
+  setSessionData
+);
+
   // ... дальше всё, как было
 
 
@@ -191,162 +196,19 @@ export default function App() {
   const polyCalcTimersRef = useRef({}); 
 
 // ... твои другие стейты
-  const diceBoxRef = useRef(null);
-  const diceClearTimeoutRef = useRef(null); // <--- ДОБАВИТЬ ЭТУ СТРОКУ
-  const [enable3DDice, setEnable3DDice] = useState(() => localStorage.getItem('disable3D') !== 'true');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
-  const enable3DDiceRef = useRef(enable3DDice);
-  useEffect(() => {
-      enable3DDiceRef.current = enable3DDice;
-  }, [enable3DDice]);
   // === 2. МГНОВЕННЫЙ СИМУЛЯТОР БРОСКОВ (Для тех, кто отключил 3D) ===
  // === 2. МГНОВЕННЫЙ СИМУЛЯТОР БРОСКОВ (Для тех, кто отключил 3D) ===
-  const simulateFallbackRoll = (notation) => {
-      let total = 0;
-      let rawRolls = []; // Собираем сырые броски
-      let parsedNotation = notation.toLowerCase().replace(/\s/g, '');
-
-      // Считаем преимущество / помеху
-      if (parsedNotation.includes('2d20kh1')) {
-          const r1 = Math.floor(Math.random() * 20) + 1;
-          const r2 = Math.floor(Math.random() * 20) + 1;
-          total += Math.max(r1, r2);
-          rawRolls = [r1, r2];
-          parsedNotation = parsedNotation.replace('2d20kh1', '');
-      } else if (parsedNotation.includes('2d20kl1')) {
-          const r1 = Math.floor(Math.random() * 20) + 1;
-          const r2 = Math.floor(Math.random() * 20) + 1;
-          total += Math.min(r1, r2);
-          rawRolls = [r1, r2];
-          parsedNotation = parsedNotation.replace('2d20kl1', '');
-      } else {
-          // Считаем обычные кубики (например, 2d6, 1d8)
-          const diceRegex = /(\d+)d(\d+)/g;
-          let match;
-          while ((match = diceRegex.exec(parsedNotation)) !== null) {
-              const count = parseInt(match[1]);
-              const sides = parseInt(match[2]);
-              for (let i = 0; i < count; i++) {
-                  const roll = Math.floor(Math.random() * sides) + 1;
-                  total += roll;
-                  rawRolls.push(roll);
-              }
-          }
-          parsedNotation = parsedNotation.replace(/\d+d\d+/g, '');
-      }
-
-      // Добавляем модификаторы (+5, -2)
-      const modRegex = /([+-]\d+)/g;
-      let matchMod;
-      while ((matchMod = modRegex.exec(parsedNotation)) !== null) {
-          total += parseInt(matchMod[1]);
-      }
-
-      return { total, rawRolls };
-  };
 
 
   // 1. Инициализация 3D движка при загрузке App.jsx
-  useEffect(() => {
-    const initDice = async () => {
-      // === ИСПРАВЛЕНИЕ: Новый синтаксис для версии 1.1.0+ ===
-      const diceBox = new DiceBox({
-        container: "#dice-box-container", // <--- Теперь ID пишется здесь
-        assetPath: '/assets/dice-box/', 
-        theme: 'default',
-        themeColor: '#da1147',
-        scale: 8,           // Оптимальный размер (чтобы 20d6 не перекрыли весь обзор)
-        spinForce: 8,        // Кубики сильнее закручиваются при броске
-        tossForce: 10,       // Сила броска (они пролетят через весь экран)
-        gravity: 2,          // Чуть более тяжелые, реалистичнее падают
-        startingHeight: 15,  // Бросаются "из-за спины" (с большей высоты)
-        shadows: true
-      });
-      await diceBox.init();
-      diceBoxRef.current = diceBox;
-      setTimeout(() => {
-          window.dispatchEvent(new Event('resize'));
-      }, 500);
-    };
-    initDice();
-  }, []);
+  
 
 
   // 2. Умная обертка для бросков
   // 2. Умная обертка для бросков (с поддержкой Fallback и 2D-режима)
   // 2. Умная обертка для бросков (с поддержкой Fallback и 2D-режима)
-  const rollDice = async (notation, reason = '', returnObj = false) => {
-    if (diceClearTimeoutRef.current) {
-      clearTimeout(diceClearTimeoutRef.current);
-    }
-
-    if (rollSound) {
-      rollSound.currentTime = 0;
-      rollSound.volume = 0.5;
-      rollSound.playbackRate = 0.9 + Math.random() * 0.2;
-      rollSound.play().catch(() => console.warn('Звук броска заблокирован браузером'));
-    }
-
-    let total = 0;
-    let rawRolls = [];
-
-    if (enable3DDiceRef.current && diceBoxRef.current) {
-      try {
-        const results = await diceBoxRef.current.roll(notation);
-        if (results && results.length > 0) {
-            total = results.reduce((acc, group) => acc + group.value, 0);
-            // Вытаскиваем только броски кубиков (игнорируя плоские модификаторы типа +5)
-            results.forEach(group => {
-                if (group.rolls) {
-                    group.rolls.forEach(die => rawRolls.push(die.value));
-                }
-            });
-        } else {
-            total = results.reduce((acc, die) => acc + die.value, 0);
-            rawRolls = results.map(die => die.value);
-        }
-        
-        diceClearTimeoutRef.current = setTimeout(() => {
-          if (diceBoxRef.current) {
-            diceBoxRef.current.clear();
-          }
-        }, 1500);
-      } catch (err) {
-        console.error('Ошибка 3D-движка кубиков, переключаемся на 2D-бросок:', err);
-        const sim = simulateFallbackRoll(notation);
-        total = sim.total;
-        rawRolls = sim.rawRolls;
-      }
-    } else {
-      const sim = simulateFallbackRoll(notation);
-      total = sim.total;
-      rawRolls = sim.rawRolls;
-    }
-    
-    const logEntry = { 
-      id: generateId(), 
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 
-      roller: currentUser?.username || 'Игрок', 
-      notation: reason ? reason : 'Бросок кубиков', 
-      rolls: notation,
-      total: total 
-    };
-
-    setSessionData(prev => {
-      const updatedLog = [logEntry, ...(prev.diceLog || [])].slice(0, 50);
-      if (activeSessionId) {
-        socket.emit('update_session', { sessionId: activeSessionId, updates: { diceLog: updatedLog } });
-      }
-      return { ...prev, diceLog: updatedLog };
-    });
-
-    // Возвращаем объект со всеми кубиками, ТОЛЬКО если нас об этом попросили
-    if (returnObj) {
-        return { total, rawRolls };
-    }
-    return total; 
-  };
   
 
   useEffect(() => { 
