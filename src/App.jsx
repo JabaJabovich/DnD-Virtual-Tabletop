@@ -1,524 +1,554 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { 
-  Upload, Users, Dices, Eye, EyeOff, Plus, Trash2, 
-  ZoomIn, ZoomOut, Maximize, Minimize, Skull, User, Settings,
-  Expand, Menu, ChevronLeft, ChevronRight, Shield,
-  Sun, Moon, LogOut, Heart, Lock, UserPlus, LogIn, X, ScrollText, Edit3,
-  Play, Users2, Loader2, StopCircle, MessageCircle, Send, Swords,
-  FolderPlus, Backpack, Sparkles, MousePointer2, Ruler, SkipForward,
-  Flame, Droplets, ShieldHalf, Target, Link, Layers, Save, Camera,
-  BookOpen, FileText, Music
+import {
+  Upload, Users, Dices, Eye, EyeOff, Plus, Trash2, ZoomIn, ZoomOut,
+  Maximize, Minimize, Skull, User, Settings, Expand, Menu, ChevronLeft,
+  ChevronRight, Shield, Sun, Moon, LogOut, Heart, Lock, UserPlus, LogIn,
+  X, ScrollText, Edit3, Play, Users2, Loader2, StopCircle, MessageCircle,
+  Send, Swords, FolderPlus, Backpack, Sparkles, MousePointer2, Ruler,
+  SkipForward, Flame, Droplets, ShieldHalf, Target, Link, Layers, Save,
+  Camera, BookOpen, FileText, Music
 } from 'lucide-react';
 
-import { useDiceEngine } from './hooks/useDiceEngine';
-import { useChat } from './hooks/useChat';
-import { useCombat } from './hooks/useCombat';
-import { useMapInteractions } from './hooks/useMapInteractions';
-
-
-import AuthScreen from './AuthScreen';
-import ProfileScreen from './ProfileScreen';
-import SessionsScreen from './SessionsScreen';
-import LobbyScreen from './LobbyScreen';
-import DicePanel from './DicePanel';
-import ChatWidget from './ChatWidget';
-import TokenPanel from './TokenPanel';
-import LeftSidebar from './LeftSidebar';
-import CombatTracker from './CombatTracker';
-import DraggableWidgets from './DraggableWidgets';
-import GameModals from './GameModals';
-import FloatingControls from './FloatingControls';
-import MapBoard from './MapBoard';
-import ActionTracker from './ActionTracker';
-import AttackRollModal from './AttackRollModal';
-import { distToSegment } from './utils/math';
-import { generateId, getUserColor, DELETE_FIELD, rollSound } from './utils/helpers';
-import { socket, SERVER_URL, uploadCanvasToStorage } from './services/socket';
-import { useAuth } from './hooks/useAuth';
-import { useTokens } from './hooks/useTokens';
-import { useMap } from './hooks/useMap';
-import { useSession } from './providers/SessionProvider';
+// -- хуки --
+import { useSession }           from './providers/SessionProvider';
+import { useAuth }              from './hooks/useAuth';
+import { useDiceEngine }        from './hooks/useDiceEngine';
+import { useMap }               from './hooks/useMap';
+import { useMapInteractions }   from './hooks/useMapInteractions';
+import { useTokens }            from './hooks/useTokens';
+import { useChat }              from './hooks/useChat';
+import { useCombat }            from './hooks/useCombat';
 import { useSessionsAndScenes } from './hooks/useSessionsAndScenes';
+import { useMedia }             from './hooks/useMedia';
+import { useWidgets }           from './hooks/useWidgets';
+import { useShare }             from './hooks/useShare';
+import { usePings }             from './hooks/usePings';
+import { useBestiary }          from './hooks/useBestiary';
+import { useCharacterLocal }    from './hooks/useCharacterLocal';
+
+// -- компоненты --
+import AuthScreen       from './AuthScreen';
+import ProfileScreen    from './ProfileScreen';
+import SessionsScreen   from './SessionsScreen';
+import LobbyScreen      from './LobbyScreen';
+import DicePanel        from './DicePanel';
+import ChatWidget       from './ChatWidget';
+import TokenPanel       from './TokenPanel';
+import LeftSidebar      from './LeftSidebar';
+import CombatTracker    from './CombatTracker';
+import DraggableWidgets from './DraggableWidgets';
+import GameModals       from './GameModals';
+import FloatingControls from './FloatingControls';
+import MapBoard         from './MapBoard';
+import ActionTracker    from './ActionTracker';
+import AttackRollModal  from './AttackRollModal';
+
+// -- утилиты --
+import { distToSegment }                             from './utils/math';
+import { generateId, getUserColor, DELETE_FIELD }    from './utils/helpers';
+import { socket, SERVER_URL, uploadCanvasToStorage } from './services/socket';
+
 
 
 
 export default function App() {
+
+  // ═══════════════════════════════════════════
+  // 1. СЕССИЯ
+  // ═══════════════════════════════════════════
   const {
     dbStatus,
     sessionsList,
-    activeSessionId,
-    setActiveSessionId,
-    sessionData,
-    setSessionData,
+    activeSessionId,  setActiveSessionId,
+    sessionData,      setSessionData,
     updateSession,
-    allScenes,
-    setAllScenes,
+    allScenes,        setAllScenes,
   } = useSession();
 
   const [newSessionName, setNewSessionName] = useState('');
-  const { rollDice, enable3DDice, setEnable3DDice } = useDiceEngine(
-  activeSessionId,
-  currentUser,
-  setSessionData
-);
+  const [localTokens,    setLocalTokens]    = useState([]);
 
-  // ... дальше всё, как было
-
-
-  const [localTokens, setLocalTokens] = useState([]); 
-
-  
-
-  // 2. ГЛОБАЛЬНАЯ ФУНКЦИЯ ОБНОВЛЕНИЯ (Мы перенесли её наверх)
-
-  // 3. ПОДКЛЮЧАЕМ НАШ НОВЫЙ ХУК АВТОРИЗАЦИИ
+  // ═══════════════════════════════════════════
+  // 2. АВТОРИЗАЦИЯ
+  // ═══════════════════════════════════════════
   const {
-    authStep, setAuthStep, authMode, setAuthMode, username, setUsername,
-    password, setPassword, regImage, setRegImage, currentUser, setCurrentUser,
-    activeCharId, setActiveCharId, userRole, setUserRole, myTokenId, setMyTokenId,
-    loginHp, setLoginHp, isEditingProfile, setIsEditingProfile, tempProfile, setTempProfile,
-    safeCharacters, activeCharacter, handleRegImageUpload, handleAuth, startEditingProfile,
-    handleProfileImageUpload, adjustStat, saveProfile, saveProfileFieldLive, deleteCharacter
+    authStep,         setAuthStep,
+    authMode,         setAuthMode,
+    username,         setUsername,
+    password,         setPassword,
+    regImage,         setRegImage,
+    currentUser,      setCurrentUser,
+    activeCharId,     setActiveCharId,
+    userRole,         setUserRole,
+    myTokenId,        setMyTokenId,
+    loginHp,          setLoginHp,
+    isEditingProfile, setIsEditingProfile,
+    tempProfile,      setTempProfile,
+    safeCharacters,
+    activeCharacter,
+    handleRegImageUpload,
+    handleAuth,
+    startEditingProfile,
+    handleProfileImageUpload,
+    adjustStat,
+    saveProfile,
+    saveProfileFieldLive,
+    deleteCharacter,
   } = useAuth(updateSession, activeSessionId, localTokens);
 
-  // 4. ОСТАЛЬНЫЕ СОСТОЯНИЯ ИНТЕРФЕЙСА (Оставляем как было)
-  const fovWorkerRef = useRef(null);
-  const tokenClickGuardRef = useRef(false); // Щит от сброса кликов
-  // Реф для прямого доступа к функциям PIXI (без рендера)
-  const mapApiRef = useRef(null);
-  
-  // Временное хранилище координат токена во время перетаскивания (чтобы не дергать state)
-  const [localVideoUrl, setLocalVideoUrl] = useState('');
-  const [localVolume, setLocalVolume] = useState(20); 
-  const [hideLocalGrid, setHideLocalGrid] = useState(false);
-  const [isChatMuted, setIsChatMuted] = useState(false);
-  
-  const [localInv, setLocalInv] = useState('');
-  const [localAbil, setLocalAbil] = useState('');
-
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
-  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
-  
-  const [showStatsWidget, setShowStatsWidget] = useState(false);
-  const [showInvWidget, setShowInvWidget] = useState(false);
-  const [showAbilWidget, setShowAbilWidget] = useState(false);
-  const [showAtkWidget, setShowAtkWidget] = useState(false); 
-
-  const [portraitToShow, setPortraitToShow] = useState(null);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [shareType, setShareType] = useState('image'); 
-  const [shareContent, setShareContent] = useState('');
-  const [shareTargets, setShareTargets] = useState(['all']);
-  const [dismissedMediaId, setDismissedMediaId] = useState(null); 
-  const [isPotatoMode, setIsPotatoMode] = useState(false);
-
-  
-  const [gmMode, setGmMode] = useState(true);
-  
-
-    const [showNotesWidget, setShowNotesWidget] = useState(false);
-    const [localNotes, setLocalNotes] = useState('');
-  const [bestiary, setBestiary] = useState(() => {
-    try { 
-        return JSON.parse(localStorage.getItem('vtt_bestiary')) || []; 
-    } catch { 
-        return []; 
-    }
-  });
-
-  useEffect(() => { 
-      try {
-          localStorage.setItem('vtt_bestiary', JSON.stringify(bestiary)); 
-      } catch (err) {
-          console.warn("localStorage недоступен (возможно режим инкогнито)");
-      }
-  }, [bestiary]);
-
-  const [diceToasts, setDiceToasts] = useState([]); 
-  const [diceCount, setDiceCount] = useState(1);
-  const [pendingDamageTarget, setPendingDamageTarget] = useState(null);
-  const [pendingAttack, setPendingAttack] = useState(null);
-
-  const [widgetPositions, setWidgetPositions] = useState({ 
-      stats: { x: 24, y: 100 }, 
-      inv: { x: 340, y: 100 }, 
-      abil: { x: 650, y: 100 }, 
-      atk: { x: 340, y: 450 },
-      notes: { x: 650, y: 450 },
-      chat: { x: typeof window !== 'undefined' ? window.innerWidth - 350 : 800, y: 100 } // <--- ДОБАВЛЕНО
-  });
-  
-  const [tokenPanelPos, setTokenPanelPos] = useState({ x: 100, y: 100 });
-  const [isTokenPanelOpen, setIsTokenPanelOpen] = useState(false);
-  const [isTokenPanelMinimized, setIsTokenPanelMinimized] = useState(false);
-  
-  const [draggingWidget, setDraggingWidget] = useState(null);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-
+  // ═══════════════════════════════════════════
+  // 3. КУБЫ
+  // ═══════════════════════════════════════════
   const {
-    scale, setScale, pan, setPan, isPanning, setIsPanning, startPan, setStartPan,
-    activeTool, setActiveTool, measureData, setMeasureData,
-    wallDrawData, setWallDrawData, templateDrawData, setTemplateDrawData,
-    draggingTemplate, setDraggingTemplate, isFullscreen, toggleFullscreen, handleWheel
+    rollDice,
+    enable3DDice, setEnable3DDice,
+  } = useDiceEngine(activeSessionId, currentUser, setSessionData);
+
+  // ═══════════════════════════════════════════
+  // 4. МЕДИА И UI-НАСТРОЙКИ
+  // ═══════════════════════════════════════════
+  const {
+    localVideoUrl,  setLocalVideoUrl,
+    localVolume,    setLocalVolume,
+    hideLocalGrid,  setHideLocalGrid,
+    isChatMuted,    setIsChatMuted,
+    isDarkMode,     setIsDarkMode,
+    isPotatoMode,   setIsPotatoMode,
+    ytPlayerRef,
+    extractYTId,
+    handleVolumeChange,
+    handleIframeLoad,
+  } = useMedia();
+
+  // ═══════════════════════════════════════════
+  // 5. ВИДЖЕТЫ И ПАНЕЛИ
+  // ═══════════════════════════════════════════
+  const {
+    widgetPositions,       setWidgetPositions,
+    showStatsWidget,       setShowStatsWidget,
+    showInvWidget,         setShowInvWidget,
+    showAbilWidget,        setShowAbilWidget,
+    showAtkWidget,         setShowAtkWidget,
+    showNotesWidget,       setShowNotesWidget,
+    draggingWidget,        setDraggingWidget,
+    dragOffset,            setDragOffset,
+    isTokenPanelOpen,      setIsTokenPanelOpen,
+    isTokenPanelMinimized, setIsTokenPanelMinimized,
+    tokenPanelPos,         setTokenPanelPos,
+    portraitToShow,        setPortraitToShow,
+    isLeftSidebarOpen,     setIsLeftSidebarOpen,
+    isRightSidebarOpen,    setIsRightSidebarOpen,
+  } = useWidgets();
+
+  // ═══════════════════════════════════════════
+  // 6. ШАРИНГ
+  // ═══════════════════════════════════════════
+  const {
+    isShareModalOpen, setIsShareModalOpen,
+    shareType,        setShareType,
+    shareContent,     setShareContent,
+    shareTargets,     setShareTargets,
+    dismissedMediaId, setDismissedMediaId,
+    handleShare,
+  } = useShare(updateSession);
+
+  // ═══════════════════════════════════════════
+  // 7. БЕСТИАРИЙ
+  // ═══════════════════════════════════════════
+  const { bestiary, setBestiary } = useBestiary();
+
+  // ═══════════════════════════════════════════
+  // 8. КАРТА
+  // ═══════════════════════════════════════════
+  const {
+    scale,            setScale,
+    pan,              setPan,
+    isPanning,        setIsPanning,
+    startPan,         setStartPan,
+    activeTool,       setActiveTool,
+    measureData,      setMeasureData,
+    wallDrawData,     setWallDrawData,
+    templateDrawData, setTemplateDrawData,
+    draggingTemplate, setDraggingTemplate,
+    isFullscreen,     toggleFullscreen,
+    handleWheel,
   } = useMap();
 
-  const {
-  syncWallsRef,
-  handleTokenPointerDown,
-  handlePointerDownBg,
-  handlePointerMoveBg,
-  handlePointerUpBg,
-  handleWidgetPointerDown,
-} = useMapInteractions({
-  activeSessionId,
-  sessionData,
-  updateSession,
-  localTokens,
-  setLocalTokens,
-  userRole,
-  myTokenId,
+  // ═══════════════════════════════════════════
+  // 9. РЕФЫ
+  // ═══════════════════════════════════════════
+  const appWrapperRef       = useRef(null);
+  const containerRef        = useRef(null);
+  const mapApiRef           = useRef(null);
+  const hasCenteredRef      = useRef(false);
+  const fovWorkerRef        = useRef(null);
+  const tokenClickGuardRef  = useRef(false);
+  const recentBroadcastsRef = useRef({});
+  const polyCalcTimersRef   = useRef({});
+  const combatSelectionRef  = useRef(null);
+  const stateRefs           = useRef({
+    authStep, userRole, currentUser, draggingTokenId: null,
+  });
 
-  activeTool,
-  portraitToShow,
-  isTokenVisible,
-  measureData,
-  setMeasureData,
-  wallDrawData,
-  setWallDrawData,
-  templateDrawData,
-  setTemplateDrawData,
-
-  pan,
-  setPan,
-  scale,
-  isPanning,
-  setIsPanning,
-  startPan,
-  setStartPan,
-
-  setSelectedTokenId,
-  setHpInputValue,
-  draggingTokenId,
-  setDraggingTokenId,
-  setIsTokenPanelOpen,
-  setIsTokenPanelMinimized,
-
-  draggingWidget,
-  setDraggingWidget,
-  dragOffset,
-  setDragOffset,
-  setWidgetPositions,
-
-  containerRef,
-  mapApiRef,
-});
-const {
-  handleLeaveSession,
-  handleDropToLobby,
-  leaveLobby,
-  createSession,
-  deleteSession,
-  joinSession,
-  startGameAsGM,
-  stopGameAsGM,
-  saveScene,
-  loadScene,
-  deleteScene,
-} = useSessionsAndScenes({
-  sessionData,
-  updateSession,
-  allScenes,
-  activeSessionId,
-  currentUser,
-  activeCharacter,
-  loginHp,
-  userRole,
-  setActiveSessionId,
-  setAuthStep,
-  setGmMode,
-  setMyTokenId,
-  setSelectedTokenId,
-  setShowStatsWidget,
-  setShowInvWidget,
-  setShowAbilWidget,
-  setShowAtkWidget,
-  setCombatSelection,
-  setIsTokenPanelOpen,
-  setScale,
-  setPan,
-  hasCenteredRef,
-  newSessionName,
-  setNewSessionName,
-});
-
-
-  const handleTemplatePointerDown = useCallback((e, id) => {
-      e.stopPropagation();
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = (e.clientX - rect.left - pan.x) / scale;
-      const y = (e.clientY - rect.top - pan.y) / scale;
-      const t = (sessionData.templates || []).find(tmpl => tmpl.id === id);
-      if (t) {
-          setDraggingTemplate({
-              ...t,
-              startCursorX: x,
-              startCursorY: y,
-              origX: t.x,
-              origY: t.y,
-              origTargetX: t.targetX,
-              origTargetY: t.targetY
-          });
-      }
-  }, [pan, scale, sessionData.templates]);
-
-  const appWrapperRef = useRef(null); 
-  const ytPlayerRef = useRef(null);
-  const containerRef = useRef(null);
-  const hasCenteredRef = useRef(false); 
-  const stateRefs = useRef({ authStep, userRole, currentUser, draggingTokenId: null });
-  const recentBroadcastsRef = useRef({}); 
-  const polyCalcTimersRef = useRef({}); 
-
-// ... твои другие стейты
+  // ═══════════════════════════════════════════
+  // 10. ЛОКАЛЬНЫЕ UI-СТЕЙТЫ
+  // ═══════════════════════════════════════════
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [gmMode,              setGmMode]              = useState(true);
+  const [diceToasts,          setDiceToasts]          = useState([]);
+  const [diceCount,           setDiceCount]           = useState(1);
+  const [pendingDamageTarget, setPendingDamageTarget] = useState(null);
+  const [pendingAttack,       setPendingAttack]       = useState(null);
 
-  // === 2. МГНОВЕННЫЙ СИМУЛЯТОР БРОСКОВ (Для тех, кто отключил 3D) ===
- // === 2. МГНОВЕННЫЙ СИМУЛЯТОР БРОСКОВ (Для тех, кто отключил 3D) ===
+  // ═══════════════════════════════════════════
+  // 11. ТУМАН И СЦЕНЫ
+  // ═══════════════════════════════════════════
+  const isFogEnabled  = sessionData.fogEnabled ?? true;
+  const sessionScenes = allScenes
+    .filter(s => s.sessionId === activeSessionId)
+    .sort((a, b) => a.createdAt - b.createdAt);
 
-
-  // 1. Инициализация 3D движка при загрузке App.jsx
-  
-
-
-  // 2. Умная обертка для бросков
-  // 2. Умная обертка для бросков (с поддержкой Fallback и 2D-режима)
-  // 2. Умная обертка для бросков (с поддержкой Fallback и 2D-режима)
-  
-
-  useEffect(() => {
-  syncWallsRef(sessionData.walls || []);
-}, [sessionData.walls, syncWallsRef]);
-    
-  
-  const isFogEnabled = sessionData.fogEnabled ?? true;
-
-  // СОЗДАЕМ МОСТ ДЛЯ БОЕВКИ (Чтобы избежать конфликта хуков)
-  const combatSelectionRef = useRef(null);
-
-  // ПОДКЛЮЧАЕМ НОВЫЙ ХУК ТОКЕНОВ СЮДА
+  // ═══════════════════════════════════════════
+  // 12. ТОКЕНЫ
+  // ═══════════════════════════════════════════
   const {
-    selectedTokenId, setSelectedTokenId, draggingTokenId, setDraggingTokenId,
-    dragPath, setDragPath, hpInputValue, setHpInputValue,
-    newTokenName, setNewTokenName, newTokenType, setNewTokenType,
-    newTokenColor, setNewTokenColor, newTokenVision, setNewTokenVision,
-    newTokenHp, setNewTokenHp, newTokenAc, setNewTokenAc,
-    newTokenImage, setNewTokenImage, newTokenHidden, setNewTokenHidden,
-    isTokenVisible, updateHp, handleTokenImageUpload, addToken, 
-    addTokenFromPreset, removeToken, updateTokenAc, toggleStatus, rollDeathSave
+    selectedTokenId,    setSelectedTokenId,
+    draggingTokenId,    setDraggingTokenId,
+    dragPath,           setDragPath,
+    hpInputValue,       setHpInputValue,
+    newTokenName,       setNewTokenName,
+    newTokenType,       setNewTokenType,
+    newTokenColor,      setNewTokenColor,
+    newTokenVision,     setNewTokenVision,
+    newTokenHp,         setNewTokenHp,
+    newTokenAc,         setNewTokenAc,
+    newTokenImage,      setNewTokenImage,
+    newTokenHidden,     setNewTokenHidden,
+    isTokenVisible,
+    updateHp,
+    handleTokenImageUpload,
+    addToken,
+    addTokenFromPreset,
+    removeToken,
+    updateTokenAc,
+    toggleStatus,
+    rollDeathSave,
   } = useTokens(
-    sessionData, updateSession, localTokens, setLocalTokens,
-    userRole, myTokenId, setMyTokenId, 
-    (action) => combatSelectionRef.current && combatSelectionRef.current(action), // Безопасная передача!
+    sessionData, updateSession,
+    localTokens, setLocalTokens,
+    userRole, myTokenId, setMyTokenId,
+    (action) => { combatSelectionRef.current = action; },
     containerRef, pan, scale, isFogEnabled, setDiceToasts
   );
 
-  
+  // ═══════════════════════════════════════════
+  // 13. АКТИВНЫЙ ПЕРСОНАЖ
+  // ═══════════════════════════════════════════
+  const selectedToken   = localTokens.find(t => t.id === selectedTokenId);
+  const canEditSelected = selectedToken &&
+    (userRole === 'gm' || selectedToken.id === myTokenId);
 
-  const selectedToken = localTokens.find(t => t.id === selectedTokenId);
-  const canEditSelected = selectedToken && (userRole === 'gm' || selectedToken.id === myTokenId);
-  
   const activeWidgetCharacter = useMemo(() => {
-    if (userRole === 'gm' && myTokenId) {
-      const controlledToken = localTokens.find(t => t.id === myTokenId);
-      if (controlledToken && controlledToken.type !== 'player') {
-        return {
-          id: controlledToken.id,
-          name: controlledToken.name,
-          stats: controlledToken.stats || { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
-          attacks: controlledToken.attacks || [],
-          abilities: controlledToken.abilities || '',
-          inventory: controlledToken.inventory || '',
-          notes: controlledToken.notes || ''
-        };
-      }
+    if (userRole === 'gm') return null;
+    if (!myTokenId) return activeCharacter;
+    const controlledToken = localTokens.find(t => t.id === myTokenId);
+    if (controlledToken && controlledToken.type === 'player') {
+      return {
+        id:        controlledToken.id,
+        name:      controlledToken.name,
+        stats:     controlledToken.stats     || { str:0, dex:0, con:0, int:0, wis:0, cha:0 },
+        attacks:   controlledToken.attacks   || [],
+        abilities: controlledToken.abilities || [],
+        inventory: controlledToken.inventory || [],
+        notes:     controlledToken.notes     || '',
+      };
     }
     return activeCharacter;
   }, [userRole, myTokenId, localTokens, activeCharacter]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setSessionData(prev => {
-        if (!prev.pings || prev.pings.length === 0) return prev;
-        const now = Date.now();
-        const filtered = prev.pings.filter(p => now - p.time < 3000);
-        if (filtered.length === prev.pings.length) return prev;
-        return { ...prev, pings: filtered };
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // ═══════════════════════════════════════════
+  // 14. ЛОКАЛЬНЫЕ ДАННЫЕ ПЕРСОНАЖА
+  // ═══════════════════════════════════════════
+  const {
+    localInv,   setLocalInv,
+    localAbil,  setLocalAbil,
+    localNotes, setLocalNotes,
+  } = useCharacterLocal(activeWidgetCharacter);
 
+  // ═══════════════════════════════════════════
+  // 15. ПИНГИ
+  // ═══════════════════════════════════════════
+  const { addMapPing } = usePings(localTokens, activeSessionId, setSessionData);
+
+  // ═══════════════════════════════════════════
+  // 16. ЧАТ
+  // ═══════════════════════════════════════════
+  const {
+    isChatOpen,      setIsChatOpen,
+    chatInput,       setChatInput,
+    unreadChatCount,
+    chatEndRef,
+    sendChatMessage,
+  } = useChat(
+    sessionData, updateSession,
+    currentUser, activeWidgetCharacter,
+    activeSessionId, isChatMuted
+  );
+
+  // ═══════════════════════════════════════════
+  // 17. БОЙ
+  // ═══════════════════════════════════════════
+  const {
+    combatSelection,    setCombatSelection,
+    toggleCombatSelection,
+    startCombat,
+    endCombat,
+    nextTurn,
+    executeAbility,
+    useAbility,
+  } = useCombat(
+    sessionData, updateSession, localTokens,
+    selectedTokenId, myTokenId, activeWidgetCharacter,
+    userRole, setPendingAttack, updateHp, addMapPing
+  );
+
+  // ═══════════════════════════════════════════
+  // 18. ВЗАИМОДЕЙСТВИЕ С КАРТОЙ
+  // ═══════════════════════════════════════════
+  const {
+    syncWallsRef,
+    handleTokenPointerDown,
+    handlePointerDownBg,
+    handlePointerMoveBg,
+    handlePointerUpBg,
+    handleWidgetPointerDown,
+  } = useMapInteractions({
+    activeSessionId,
+    sessionData,      updateSession,
+    localTokens,      setLocalTokens,
+    userRole,         myTokenId,
+    activeTool,       portraitToShow,
+    isTokenVisible,
+    measureData,      setMeasureData,
+    wallDrawData,     setWallDrawData,
+    templateDrawData, setTemplateDrawData,
+    pan,    setPan,
+    scale,
+    isPanning,  setIsPanning,
+    startPan,   setStartPan,
+    setSelectedTokenId,
+    setHpInputValue,
+    draggingTokenId,  setDraggingTokenId,
+    setIsTokenPanelOpen,
+    setIsTokenPanelMinimized,
+    draggingWidget,   setDraggingWidget,
+    dragOffset,       setDragOffset,
+    setWidgetPositions,
+    containerRef,
+    mapApiRef,
+  });
+
+  // ═══════════════════════════════════════════
+  // 19. СЕССИИ И СЦЕНЫ
+  // ═══════════════════════════════════════════
+  const {
+    handleLeaveSession,
+    handleDropToLobby,
+    leaveLobby,
+    createSession,
+    deleteSession,
+    joinSession,
+    startGameAsGM,
+    stopGameAsGM,
+    saveScene,
+    loadScene,
+    deleteScene,
+    handleImageUpload,
+  } = useSessionsAndScenes({
+    sessionData,      updateSession,
+    allScenes,        activeSessionId,
+    currentUser,      activeCharacter,
+    loginHp,          userRole,
+    setActiveSessionId,
+    setAuthStep,      setGmMode,
+    setMyTokenId,     setSelectedTokenId,
+    setShowStatsWidget,
+    setShowInvWidget,
+    setShowAbilWidget,
+    setShowAtkWidget,
+    setCombatSelection,
+    setIsTokenPanelOpen,
+    setScale,         setPan,
+    hasCenteredRef,
+    newSessionName,   setNewSessionName,
+    isFogEnabled,
+  });
+
+  // ═══════════════════════════════════════════
+  // 20. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+  // ═══════════════════════════════════════════
+  const handleTemplatePointerDown = useCallback((e, id) => {
+    e.stopPropagation();
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left - pan.x) / scale;
+    const y = (e.clientY - rect.top  - pan.y) / scale;
+    const t = (sessionData.templates || []).find(tmpl => tmpl.id === id);
+    if (t) {
+      setDraggingTemplate({
+        ...t,
+        startCursorX: x, startCursorY: y,
+        origX: t.x,      origY: t.y,
+        origTargetX: t.targetX, origTargetY: t.targetY,
+      });
+    }
+  }, [pan, scale, sessionData.templates, setDraggingTemplate]);
+
+  // ═══════════════════════════════════════════
+  // 21. СИНХРОНИЗАЦИЯ СТЕН
+  // ═══════════════════════════════════════════
+  useEffect(() => {
+    syncWallsRef(sessionData.walls || []);
+  }, [sessionData.walls, syncWallsRef]);
+
+    // ═══════════════════════════════════════════
+  // 22. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+  // ═══════════════════════════════════════════
   const removeTemplate = useCallback((id) => {
     const newTemplates = (sessionData.templates || []).filter(t => t.id !== id);
     updateSession({ templates: newTemplates });
   }, [sessionData.templates, updateSession]);
 
+  const onMapWheel = useCallback((e) => {
+    handleWheel(e, containerRef, portraitToShow);
+  }, [handleWheel, portraitToShow]);
 
-  const addMapPing = useCallback((tokenId, type, value = null) => {
-    const t = localTokens.find(tok => tok.id === tokenId);
-    if (!t) return;
-    const newPing = { id: generateId(), x: t.x, y: t.y, type, value, time: Date.now() };
-    if (socket.volatile) {
-        socket.volatile.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
-    } else {
-        socket.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
-    }
-    
-    setSessionData(prev => {
-        const recentPings = (prev.pings || []).filter(p => Date.now() - p.time < 3000);
-        // ИСПРАВЛЕНИЕ: Защита от дублей
-        if (recentPings.some(p => p.id === newPing.id)) return prev;
-        return { ...prev, pings: [...recentPings, newPing] };
-    });
-  }, [localTokens, activeSessionId]);
-  
-  const { isChatOpen, setIsChatOpen, chatInput, setChatInput, unreadChatCount, chatEndRef, sendChatMessage } = useChat(sessionData, updateSession, currentUser, activeWidgetCharacter, activeSessionId, isChatMuted);
-  const { combatSelection, setCombatSelection, toggleCombatSelection, startCombat, endCombat, nextTurn, executeAbility, useAbility } = useCombat(sessionData, updateSession, localTokens, selectedTokenId, myTokenId, activeWidgetCharacter, userRole, setPendingAttack, updateHp, addMapPing);
-    useEffect(() => { combatSelectionRef.current = setCombatSelection; }, [setCombatSelection]);
-
-
-
-  
-
-
-  // === ГЛАВНЫЙ И ЕДИНСТВЕННЫЙ КОНТРОЛЛЕР МЫШИ ===
-  // === ГЛАВНЫЙ И ЕДИНСТВЕННЫЙ КОНТРОЛЛЕР МЫШИ ===
-  useEffect(() => {
-    const active = isPanning || 
-                   measureData || 
-                   wallDrawData || 
-                   templateDrawData || 
-                   activeTool === 'wall-eraser' || 
-                   draggingTokenId || 
-                   draggingWidget !== null ||
-                   draggingTemplate !== null;
-
-    if (active) { 
-        window.addEventListener('pointermove', handlePointerMoveBg); 
-        window.addEventListener('pointerup', handlePointerUpBg); 
-    }
-    return () => { 
-        window.removeEventListener('pointermove', handlePointerMoveBg); 
-        window.removeEventListener('pointerup', handlePointerUpBg); 
-    };
-  }, [
-    isPanning, measureData, wallDrawData, templateDrawData, 
-    activeTool, draggingTokenId, draggingWidget, draggingTemplate,
-    handlePointerMoveBg, handlePointerUpBg
-  ]);
-  // Обертка для зума
-  const onMapWheel = (e) => handleWheel(e, containerRef, portraitToShow);
-  const handleContextMenuMap = (e) => {
+  const handleContextMenuMap = useCallback((e) => {
     e.preventDefault();
-    
-    // 1. Логика линейки (оставляем твою без изменений)
-    if (measureData && activeTool === 'ruler') {
-       const rect = containerRef.current.getBoundingClientRect();
-       const x = (e.clientX - rect.left - pan.x) / scale; 
-       const y = (e.clientY - rect.top - pan.y) / scale;
-       setMeasureData(prev => ({ ...prev, points: [...prev.points, {x,y}], current: {x,y} }));
-       return; 
-    }
-    
-    // 2. Игнорируем клики по UI
-    if (e.target.closest('aside') || e.target.closest('.no-zoom') || portraitToShow) return;
-    
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left - pan.x) / scale; 
-    const y = (e.clientY - rect.top - pan.y) / scale;
-    
-    // === НОВАЯ ЛОГИКА ЦВЕТОВ ===
-    // Получаем уникальный цвет (объект с bg и shadow) на основе ID пользователя
-    const userColor = getUserColor(currentUser?.id);
-    
-    const newPing = { 
-        id: generateId(), 
-        x, 
-        y, 
-        color: userColor, // Передаем сгенерированный цвет
-        type: 'ping', 
-        time: Date.now() 
-    };
-    
-    // 3. Отправка пинга по сокетам
-    if (socket.volatile) {
-        socket.volatile.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
-    } else {
-        socket.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
-    }
-    
-    // 4. Локальное обновление и очистка старых пингов
-    setSessionData(prev => { 
-        const recentPings = (prev.pings || []).filter(p => Date.now() - p.time < 3000); 
-        // ИСПРАВЛЕНИЕ: Проверяем, нет ли уже такого пинга в массиве
-        if (recentPings.some(p => p.id === newPing.id)) return prev;
-        return { ...prev, pings: [...recentPings, newPing] }; 
-    });
-  };
 
-  const rollStat = async (statName, modifier, mode = 'normal') => {
+    if (measureData && activeTool === 'ruler') {
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = (e.clientX - rect.left - pan.x) / scale;
+      const y = (e.clientY - rect.top  - pan.y) / scale;
+      setMeasureData(prev => ({
+        ...prev,
+        points:  [...prev.points, { x, y }],
+        current: { x, y },
+      }));
+      return;
+    }
+
+    if (e.target.closest('aside') || e.target.closest('.no-zoom') || portraitToShow) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left - pan.x) / scale;
+    const y = (e.clientY - rect.top  - pan.y) / scale;
+
+    const userColor = getUserColor(currentUser?.id);
+    const newPing = {
+      id:    generateId(),
+      x, y,
+      color: userColor,
+      type:  'ping',
+      time:  Date.now(),
+    };
+
+    if (socket.volatile) {
+      socket.volatile.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
+    } else {
+      socket.emit('broadcast', { sessionId: activeSessionId, event: 'ping', payload: newPing });
+    }
+
+    setSessionData(prev => {
+      const recentPings = (prev.pings || []).filter(p => Date.now() - p.time < 3000);
+      if (recentPings.some(p => p.id === newPing.id)) return prev;
+      return { ...prev, pings: [...recentPings, newPing] };
+    });
+  }, [
+    measureData, activeTool, pan, scale,
+    portraitToShow, currentUser, activeSessionId,
+    setMeasureData, setSessionData,
+  ]);
+
+  const rollStat = useCallback(async (statName, modifier, mode = 'normal') => {
     let notation = '1d20';
     let modeLabel = '';
-    
-    if (mode === 'adv') { notation = '2d20kh1'; modeLabel = ' (Преимущество)'; } 
+    if (mode === 'adv')      { notation = '2d20kh1'; modeLabel = ' (Преимущество)'; }
     else if (mode === 'dis') { notation = '2d20kl1'; modeLabel = ' (Помеха)'; }
-
-    if (modifier !== 0) {
-        notation += modifier > 0 ? `+${modifier}` : modifier;
-    }
-
+    if (modifier !== 0) notation += modifier > 0 ? `+${modifier}` : `${modifier}`;
     const statLabels = { str: 'Сила', dex: 'Ловкость', con: 'Телосложение', int: 'Интеллект', wis: 'Мудрость', cha: 'Харизма' };
     const statLabel = statLabels[statName] || statName;
-    const rollerName = activeWidgetCharacter?.name || (userRole === 'gm' ? 'Мастер' : 'Игрок');
-
-    // Бросаем 3D кубик. Логгирование произойдет автоматически внутри твоей обертки rollDice!
     await rollDice(notation, `Проверка: ${statLabel}${modeLabel}`);
-  };
+  }, [rollDice]);
 
-  const rollAttack = (attack) => setPendingAttack(attack);
-  const extractYTId = (url) => { const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?]+)/); return match ? match[1] : null; };
-  const handleVolumeChange = (e) => { const vol = e.target.value; setLocalVolume(vol); if (ytPlayerRef.current && ytPlayerRef.current.contentWindow) { ytPlayerRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [vol] }), '*'); } };
-  const handleIframeLoad = () => { if (ytPlayerRef.current && ytPlayerRef.current.contentWindow) { ytPlayerRef.current.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [localVolume] }), '*'); } };
-  const handleManualHit = (id) => { addMapPing(id, 'hit'); setPendingDamageTarget(id); };
+  const rollAttack    = useCallback((attack) => setPendingAttack(attack), []);
+  const handleManualHit = useCallback((id) => {
+    addMapPing(id, 'hit');
+    setPendingDamageTarget(id);
+  }, [addMapPing]);
 
+  // ═══════════════════════════════════════════
+  // 23. ЭФФЕКТЫ
+  // ═══════════════════════════════════════════
 
+  // Синхронизация stateRefs
+  useEffect(() => {
+    stateRefs.current = { authStep, userRole, currentUser, draggingTokenId };
+  }, [authStep, userRole, currentUser, draggingTokenId]);
+
+  // Синхронизация combatSelection ref
+  useEffect(() => {
+    combatSelectionRef.current = setCombatSelection;
+  }, [setCombatSelection]);
+
+  // Глобальные pointermove/pointerup
+  useEffect(() => {
+    const active =
+      isPanning || measureData || wallDrawData || templateDrawData ||
+      activeTool === 'wall-eraser' || draggingTokenId ||
+      draggingWidget !== null || draggingTemplate !== null;
+
+    if (active) {
+      window.addEventListener('pointermove', handlePointerMoveBg);
+      window.addEventListener('pointerup',   handlePointerUpBg);
+    }
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMoveBg);
+      window.removeEventListener('pointerup',   handlePointerUpBg);
+    };
+  }, [
+    isPanning, measureData, wallDrawData, templateDrawData,
+    activeTool, draggingTokenId, draggingWidget, draggingTemplate,
+    handlePointerMoveBg, handlePointerUpBg,
+  ]);
+
+  // Подписки на сокет внутри сессии
   useEffect(() => {
     if (!activeSessionId) return;
     socket.emit('join_session', activeSessionId);
-    
+
     socket.on('session_full_state', (data) => {
       if (!data) return;
       setSessionData(prev => ({
-    ...prev,
-    ...data,
-    tokens: data.tokens || {}, // Гарантируем объект
-    walls: data.walls || [],
-    chatMessages: data.chatMessages || [],
-    templates: data.templates || [], // <--- ФИКС 2.2: ЖЕСТКО ЗАТИРАЕМ ШАБЛОНЫ
-    pings: data.pings || [],         // <--- Заодно чистим старые пинги
-    diceLog: data.diceLog || []
-  }));
-      
+        ...prev, ...data,
+        tokens:       data.tokens       || {},
+        walls:        data.walls        || [],
+        chatMessages: data.chatMessages || [],
+        templates:    data.templates    || [],
+        pings:        data.pings        || [],
+        diceLog:      data.diceLog      || [],
+      }));
+
       const serverTokensArr = data.tokens ? Object.values(data.tokens) : [];
       const { authStep: currentAuthStep, userRole: currentRole, currentUser: currUser } = stateRefs.current;
       setLocalTokens(serverTokensArr);
 
       if (currentAuthStep === 'lobby_wait' && data.isGameStarted) {
-        if (currentRole === 'player') { 
-            const myT = serverTokensArr.find(t => t.accountId === currUser?.id && t.characterId === activeCharId); 
-            if (myT) setMyTokenId(myT.id); 
+        if (currentRole === 'player') {
+          const myT = serverTokensArr.find(
+            t => t.accountId === currUser?.id && t.characterId === activeCharId
+          );
+          if (myT) setMyTokenId(myT.id);
         }
         setAuthStep('in_game');
       }
@@ -526,132 +556,125 @@ const {
     });
 
     socket.on('session_update', (payload) => {
-        setSessionData(prev => {
-            let nextState = { ...prev }; // Быстрое поверхностное копирование корня
-for (const key in payload) {
-    const val = payload[key];
-    if (key.includes('.')) {
-        const parts = key.split('.');
-        let currentLevel = nextState;
-        for (let i = 0; i < parts.length - 1; i++) {
-            const part = parts[i]; 
-            // Клонируем только измененный вложенный объект, а не всю сессию
-            currentLevel[part] = { ...currentLevel[part] };
-            currentLevel = currentLevel[part];
-        }
-        if (val === '__DELETE_FIELD__') delete currentLevel[parts[parts.length - 1]]; 
-        else currentLevel[parts[parts.length - 1]] = val;
-    } else {
-        if (val === '__DELETE_FIELD__') delete nextState[key]; 
-        else nextState[key] = val;
-    }
-}
-return nextState;
-        });
-
-        if (payload.isGameStarted === true && stateRefs.current.authStep === 'lobby_wait') {
-            if (stateRefs.current.userRole === 'player' && payload.tokens) {
-                const myT = Object.values(payload.tokens).find(t => t.accountId === stateRefs.current.currentUser?.id && t.characterId === activeCharId);
-                if (myT) setMyTokenId(myT.id);
+      setSessionData(prev => {
+        let nextState = { ...prev };
+        for (const key in payload) {
+          const val = payload[key];
+          if (key.includes('.')) {
+            const parts = key.split('.');
+            let currentLevel = nextState;
+            for (let i = 0; i < parts.length - 1; i++) {
+              const part = parts[i];
+              currentLevel[part] = { ...currentLevel[part] };
+              currentLevel = currentLevel[part];
             }
-            setAuthStep('in_game');
-        } else if (payload.isGameStarted === false && stateRefs.current.authStep === 'in_game') {
-            handleDropToLobby();
+            if (val === DELETE_FIELD) delete currentLevel[parts[parts.length - 1]];
+            else currentLevel[parts[parts.length - 1]] = val;
+          } else {
+            if (val === DELETE_FIELD) delete nextState[key];
+            else nextState[key] = val;
+          }
         }
+        return nextState;
+      });
+
+      if (payload.isGameStarted === true && stateRefs.current.authStep === 'lobby_wait') {
+        if (stateRefs.current.userRole === 'player' && payload.tokens) {
+          const myT = Object.values(payload.tokens).find(
+            t => t.accountId === stateRefs.current.currentUser?.id && t.characterId === activeCharId
+          );
+          if (myT) setMyTokenId(myT.id);
+        }
+        setAuthStep('in_game');
+      } else if (payload.isGameStarted === false && stateRefs.current.authStep === 'in_game') {
+        handleDropToLobby();
+      }
     });
 
     socket.on('broadcast', ({ event, payload }) => {
-    if (event === 'token_move') {
+      if (event === 'token_move') {
         const { id, x, y, fovPolygon } = payload;
         recentBroadcastsRef.current[id] = Date.now();
         if (id !== stateRefs.current.draggingTokenId) {
-            setLocalTokens(prev => prev.map(t => t.id === id ? { ...t, x, y, fovPolygon } : t));
+          setLocalTokens(prev => prev.map(t => t.id === id ? { ...t, x, y, fovPolygon } : t));
         }
-    }
-        if (event === 'ping') { 
-        setSessionData(prev => { 
-            const recentPings = (prev.pings || []).filter(p => Date.now() - p.time < 3000); 
-            // ИСПРАВЛЕНИЕ: Защита от дублей из сети
-            if (recentPings.some(p => p.id === payload.id)) return prev;
-            return { ...prev, pings: [...recentPings, payload] }; 
-        }); 
-    }
+      }
+      if (event === 'ping') {
+        setSessionData(prev => {
+          const recentPings = (prev.pings || []).filter(p => Date.now() - p.time < 3000);
+          if (recentPings.some(p => p.id === payload.id)) return prev;
+          return { ...prev, pings: [...recentPings, payload] };
+        });
+      }
     });
 
-    return () => { socket.off('session_full_state'); socket.off('session_update'); socket.off('broadcast'); };
+    return () => {
+      socket.off('session_full_state');
+      socket.off('session_update');
+      socket.off('broadcast');
+    };
   }, [activeSessionId, activeCharId]);
 
+  // Синхронизация localTokens с sessionData.tokens
   useEffect(() => {
-  if (!sessionData.tokens || Object.keys(sessionData.tokens).length === 0) {
-    if (localTokens.length > 0) setLocalTokens([]);
-    return;
-  }
-  
-
-  setLocalTokens(prevLocal => {
-    const serverTokensArr = Object.values(sessionData.tokens);
-    const draggingId = stateRefs.current.draggingTokenId;
-    
-    if (serverTokensArr.length !== prevLocal.length) {
-      return serverTokensArr;
+    if (!sessionData.tokens || Object.keys(sessionData.tokens).length === 0) {
+      if (localTokens.length > 0) setLocalTokens([]);
+      return;
     }
 
-    let hasChanges = false;
-    const newLocal = serverTokensArr.map(serverToken => {
-      if (serverToken.id === draggingId) {
-        return prevLocal.find(t => t.id === serverToken.id) || serverToken;
-      }
-      
-      const local = prevLocal.find(t => t.id === serverToken.id);
-      
-      if (
-            !local || 
-            local.x !== serverToken.x || 
-            local.y !== serverToken.y || 
-            local.hp !== serverToken.hp ||
-            local.tempHp !== serverToken.tempHp || // <--- ДОБАВИЛИ СЛЕЖЕНИЕ ЗА ЩИТОМ
-            local.vision !== serverToken.vision || 
-            local.size !== serverToken.size ||
-            local.isHidden !== serverToken.isHidden || 
-            local.ac !== serverToken.ac ||             
-            JSON.stringify(local.statuses) !== JSON.stringify(serverToken.statuses) 
-          ) {
-            hasChanges = true;
-            return serverToken;
-          }
-      return local;
+    setLocalTokens(prevLocal => {
+      const serverTokensArr = Object.values(sessionData.tokens);
+      const draggingId = stateRefs.current.draggingTokenId;
+
+      if (serverTokensArr.length !== prevLocal.length) return serverTokensArr;
+
+      let hasChanges = false;
+      const newLocal = serverTokensArr.map(serverToken => {
+        if (serverToken.id === draggingId) {
+          return prevLocal.find(t => t.id === serverToken.id) || serverToken;
+        }
+        const local = prevLocal.find(t => t.id === serverToken.id);
+        if (
+          !local ||
+          local.x       !== serverToken.x     ||
+          local.y       !== serverToken.y     ||
+          local.hp      !== serverToken.hp    ||
+          local.tempHp  !== serverToken.tempHp ||
+          local.vision  !== serverToken.vision ||
+          local.size    !== serverToken.size   ||
+          local.isHidden !== serverToken.isHidden ||
+          local.ac      !== serverToken.ac    ||
+          JSON.stringify(local.statuses) !== JSON.stringify(serverToken.statuses)
+        ) {
+          hasChanges = true;
+          return serverToken;
+        }
+        return local;
+      });
+
+      return hasChanges ? newLocal : prevLocal;
     });
+  }, [sessionData.tokens]);
 
-    return hasChanges ? newLocal : prevLocal;
-  });
-}, [sessionData.tokens]); 
-
-  const sessionScenes = allScenes.filter(s => s.sessionId === activeSessionId).sort((a, b) => a.createdAt - b.createdAt);
-
-  useEffect(() => { stateRefs.current = { authStep, userRole, currentUser, draggingTokenId }; }, [authStep, userRole, currentUser, draggingTokenId]);
-  
-  useEffect(() => { 
-      if (typeof window !== 'undefined') setTokenPanelPos({ x: Math.max(20, window.innerWidth / 2 - 175), y: Math.max(20, window.innerHeight / 2 - 250) }); 
-  }, []);
-  
-  useEffect(() => { setLocalInv(activeWidgetCharacter?.inventory || ''); }, [activeWidgetCharacter?.inventory, activeWidgetCharacter?.id]);
-  useEffect(() => { setLocalAbil(activeWidgetCharacter?.abilities || ''); }, [activeWidgetCharacter?.abilities, activeWidgetCharacter?.id]);
-    useEffect(() => { setLocalNotes(activeWidgetCharacter?.notes || ''); }, [activeWidgetCharacter?.notes, activeWidgetCharacter?.id]);
+  // Центрирование камеры на игроке
   useEffect(() => {
     if (authStep !== 'in_game') { hasCenteredRef.current = false; return; }
     if (authStep === 'in_game' && userRole === 'player' && myTokenId && !hasCenteredRef.current && containerRef.current) {
       const myToken = localTokens.find(t => t.id === myTokenId);
       if (myToken) {
         const rect = containerRef.current.getBoundingClientRect();
-        setPan({ x: (rect.width / 2) - (myToken.x * scale), y: (rect.height / 2) - (myToken.y * scale) });
-        hasCenteredRef.current = true; 
+        setPan({
+          x: rect.width  / 2 - myToken.x * scale,
+          y: rect.height / 2 - myToken.y * scale,
+        });
+        hasCenteredRef.current = true;
       }
     }
   }, [authStep, userRole, myTokenId, localTokens, scale]);
 
-  // ... выше находятся ваши функции handlePointerMoveBg и другие ...
-// === ГЛАВНЫЙ И ЕДИНСТВЕННЫЙ КОНТРОЛЛЕР МЫШИ ===
-// === ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ МЫШИ (ДЛЯ ВСЕХ ИНСТРУМЕНТОВ) ===
+  // ═══════════════════════════════════════════
+  // 24. РЕНДЕР
+  // ═══════════════════════════════════════════
 
   return (
     <div ref={appWrapperRef} className={`fixed inset-0 flex h-[100dvh] w-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden selection:bg-amber-900/50 select-none ${!isDarkMode ? 'light-theme' : ''} ${isPotatoMode ? 'potato-mode' : ''}`}>
