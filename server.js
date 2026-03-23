@@ -11,6 +11,33 @@ const { Pool } = require('pg');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+const rateLimit = require('express-rate-limit');
+
+// Общий лимит
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 200,
+  message: { error: 'Слишком много запросов, попробуйте позже' },
+});
+
+// Строгий лимит для загрузки файлов
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 минута
+  max: 20,
+  message: { error: 'Слишком много загрузок' },
+});
+
+// Лимит для импорта монстров
+const monsterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Слишком много запросов к API монстров' },
+});
+
+app.use(generalLimiter);
+app.use('/upload', uploadLimiter);
+app.use('/api/import-monster', monsterLimiter);
+
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Папки для загрузок
@@ -24,16 +51,54 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Эндпоинт загрузки изображений
+const ALLOWED_FOLDERS = ['maps', 'tokens', 'avatars'];
+const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB в base64
+
 app.post('/upload', (req, res) => {
   const { imageBase64, folder } = req.body;
-  const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-  const fileName = `${Date.now()}-${Math.floor(Math.random() * 1000)}.jpg`;
+
+  // Валидация папки
+  if (!folder || !ALLOWED_FOLDERS.includes(folder)) {
+    return res.status(400).json({ error: 'Недопустимая папка' });
+  }
+
+  // Валидация наличия данных
+  if (!imageBase64) {
+    return res.status(400).json({ error: 'Нет данных изображения' });
+  }
+
+  // Валидация типа файла
+  const mimeMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
+  if (!mimeMatch) {
+    return res.status(400).json({ error: 'Недопустимый формат файла' });
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!allowedMimes.includes(mimeMatch[1])) {
+    return res.status(400).json({ error: 'Недопустимый тип файла' });
+  }
+
+  // Проверка размера
+  const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+  const sizeInBytes = Buffer.byteLength(base64Data, 'base64');
+  if (sizeInBytes > MAX_UPLOAD_SIZE) {
+    return res.status(400).json({ error: 'Файл слишком большой (макс. 10MB)' });
+  }
+
+  // Безопасное имя файла
+  const ext = mimeMatch[1].split('/')[1];
+  const fileName = `${Date.now()}-${Math.floor(Math.random() * 100000)}.${ext}`;
   const filePath = path.join(UPLOADS_DIR, folder, fileName);
+
   fs.writeFile(filePath, base64Data, 'base64', (err) => {
-    if (err) return res.status(500).send('Ошибка');
+    if (err) {
+      console.error('Ошибка записи файла:', err);
+      return res.status(500).json({ error: 'Ошибка сохранения файла' });
+    }
     res.json({ url: `/uploads/${folder}/${fileName}` });
   });
 });
+
 
 // Импорт монстров из D&D API
 app.get('/api/import-monster/:name', async (req, res) => {
@@ -121,10 +186,13 @@ const io = new Server(server, {
 
 // Кэш активных сессий и отложенное сохранение в БД
 let activeSessions = {};
+let dirtySessions = new Set(); // только изменённые сессии
 let saveTimeout = null;
 let isSaving = false;
 
-function scheduleDbSave() {
+
+function scheduleDbSave(sessionId) {
+  if (sessionId) dirtySessions.add(sessionId);
   if (saveTimeout) return;
   saveTimeout = setTimeout(async () => {
     if (isSaving) {
@@ -133,17 +201,27 @@ function scheduleDbSave() {
       return;
     }
     isSaving = true;
+    const toSave = [...dirtySessions];
+    dirtySessions.clear();
     try {
-      for (const [id, state] of Object.entries(activeSessions)) {
-        await pool.query('UPDATE sessions SET state = $1 WHERE id = $2', [state, id]);
+      for (const id of toSave) {
+        if (activeSessions[id]) {
+          await pool.query(
+            'UPDATE sessions SET state = $1 WHERE id = $2',
+            [activeSessions[id], id]
+          );
+        }
       }
     } catch (err) {
       console.error('Ошибка записи в БД:', err);
+      // Возвращаем несохранённые сессии обратно
+      toSave.forEach(id => dirtySessions.add(id));
     }
     isSaving = false;
     saveTimeout = null;
   }, 2000);
 }
+
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
@@ -164,32 +242,141 @@ process.on('SIGTERM', async () => {
   server.close(() => process.exit(0));
 });
 
+const bcrypt = require('bcrypt');
+
+// Эндпоинт логина — проверяем пароль на сервере
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Заполните все поля' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id, username, role, characters, password FROM accounts WHERE username = $1',
+      [username.trim()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Неверный логин или пароль' });
+    }
+
+    const account = result.rows[0];
+    let isValid = false;
+
+// Если пароль уже хэширован bcrypt
+if (account.password && account.password.startsWith('$2b$')) {
+  isValid = await bcrypt.compare(password, account.password);
+} else {
+  // Старый пароль в открытом виде — сравниваем напрямую
+  isValid = account.password === password;
+
+  // И сразу обновляем на хэш
+  if (isValid) {
+    const hashed = await bcrypt.hash(password, 10);
+    await pool.query(
+      'UPDATE accounts SET password = $1 WHERE id = $2',
+      [hashed, account.id]
+    );
+  }
+}
+
+if (!isValid) {
+  return res.status(401).json({ error: 'Неверный логин или пароль' });
+}
+
+    // Возвращаем аккаунт БЕЗ пароля
+    const { password: _, ...safeAccount } = account;
+    res.json(safeAccount);
+  } catch (e) {
+    console.error('login error:', e);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// Эндпоинт регистрации
+app.post('/api/register', async (req, res) => {
+  const { id, username, password, role, characters } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Заполните все поля' });
+  }
+
+  try {
+    const existing = await pool.query(
+      'SELECT id FROM accounts WHERE username = $1',
+      [username.trim()]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'Пользователь уже существует' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await pool.query(
+      `INSERT INTO accounts (id, username, password, role, characters)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, username.trim(), hashedPassword, role || 'player', JSON.stringify(characters || [])]
+    );
+
+    const result = await pool.query(
+      'SELECT id, username, role, characters FROM accounts WHERE id = $1',
+      [id]
+    );
+
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('register error:', e);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+
 io.on('connection', (socket) => {
   console.log('🟢 Игрок подключился:', socket.id);
 
   // --- Аккаунты ---
   socket.on('get_accounts', async (cb) => {
-    try {
-      const res = await pool.query('SELECT * FROM accounts');
-      cb(res.rows);
-    } catch (e) {
-      console.error('get_accounts error:', e);
-      cb([]);
-    }
-  });
+  try {
+    // Никогда не отдаём хэш пароля клиенту
+    const res = await pool.query(
+      'SELECT id, username, role, characters FROM accounts'
+    );
+    cb(res.rows);
+  } catch (e) {
+    console.error('get_accounts error:', e);
+    cb([]);
+  }
+});
+
 
   socket.on('save_account', async (acc) => {
-    try {
-      await pool.query(
-        'INSERT INTO accounts (id, username, password, role, characters) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET username = $2, password = $3, role = $4, characters = $5',
-        [acc.id, acc.username, acc.password, acc.role || 'player', JSON.stringify(acc.characters || [])]
-      );
-      const res = await pool.query('SELECT * FROM accounts');
-      io.emit('accounts_updated', res.rows);
-    } catch (e) {
-      console.error('Ошибка сохранения аккаунта:', e);
+  try {
+    const bcrypt = require('bcrypt');
+
+    // Хэшируем только если пароль изменился (не является уже хэшем)
+    let hashedPassword = acc.password;
+    const isAlreadyHashed = acc.password && acc.password.startsWith('$2b$');
+    if (!isAlreadyHashed && acc.password) {
+      hashedPassword = await bcrypt.hash(acc.password, 10);
     }
-  });
+
+    await pool.query(
+      `INSERT INTO accounts (id, username, password, role, characters)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE
+       SET username = $2, password = $3, role = $4, characters = $5`,
+      [acc.id, acc.username, hashedPassword, acc.role || 'player', JSON.stringify(acc.characters || [])]
+    );
+
+    // Никогда не отдаём пароль клиенту
+    const res = await pool.query(
+      'SELECT id, username, role, characters FROM accounts'
+    );
+    io.emit('accounts_updated', res.rows);
+  } catch (e) {
+    console.error('Ошибка сохранения аккаунта:', e);
+  }
+});
+
 
   // --- Сессии ---
   socket.on('get_sessions', async (cb) => {
@@ -259,9 +446,19 @@ io.on('connection', (socket) => {
   });
 
   // --- Ядро реального времени с подтверждением ---
-  socket.on('update_session', ({ sessionId, updates, updateId }) => {
+  socket.on('update_session', async ({ sessionId, updates, updateId }) => {
     if (!activeSessions[sessionId]) {
-      activeSessions[sessionId] = { id: sessionId, tokens: {} };
+      try {
+        const res = await pool.query('SELECT state FROM sessions WHERE id = $1', [sessionId]);
+        if (res.rows.length > 0) {
+          activeSessions[sessionId] = res.rows[0].state;
+        } else {
+          activeSessions[sessionId] = { id: sessionId, tokens: {} };
+        }
+      } catch (err) {
+        console.error('Ошибка защиты сессии при обновлении:', err);
+        activeSessions[sessionId] = { id: sessionId, tokens: {} };
+      }
     }
 
     try {
@@ -291,7 +488,7 @@ io.on('connection', (socket) => {
         socket.emit('update_session_ack', { updateId, success: true });
       }
 
-      scheduleDbSave();
+      scheduleDbSave(sessionId);
     } catch (error) {
       console.error('Error applying update:', error);
       if (updateId) {

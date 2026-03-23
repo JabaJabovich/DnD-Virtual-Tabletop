@@ -1,6 +1,7 @@
 // hooks/useSessionsAndScenes.js
 import { useCallback } from 'react';
-import { socket } from '../services/socket';
+import { socket, uploadCanvasToStorage } from '../services/socket';
+
 import { generateId, DELETE_FIELD } from '../utils/helpers';
 
 export function useSessionsAndScenes(params) {
@@ -443,8 +444,144 @@ export function useSessionsAndScenes(params) {
     }
   }, []);
 
-  // handleImageUpload можно тоже сюда вынести по тому же паттерну
-  // (чтобы не расписывать ещё 100 строк здесь, логику ты уже перенёс 1:1)
+  const handleImageUpload = useCallback((e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const playersOnly = {};
+  Object.values(sessionData.tokens || {}).forEach(t => {
+    if (t.accountId) playersOnly[t.id] = t;
+  });
+
+  if (file.name.toLowerCase().endsWith('.dd2vtt')) {
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        const ppi = data.resolution?.pixels_per_grid || 70;
+        const img = new Image();
+        img.onload = async () => {
+          const canvas = document.createElement('canvas');
+          let w = img.width; let h = img.height;
+          const max = 2048; let ratio = 1;
+          if (w > max || h > max) {
+            ratio = Math.min(max / w, max / h);
+            w = Math.floor(w * ratio);
+            h = Math.floor(h * ratio);
+          }
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const imageUrl = await uploadCanvasToStorage(canvas, 'maps');
+
+          let playerIndex = 0;
+          Object.values(playersOnly).forEach(p => {
+            p.x = w / 2 + ((playerIndex % 5) * 80 - 160);
+            p.y = h / 2 + Math.floor(playerIndex / 5) * 80;
+            playerIndex++;
+          });
+
+          let newWalls = [];
+          if (data.line_of_sight) {
+            data.line_of_sight.forEach(path => {
+              for (let i = 0; i < path.length - 1; i++) {
+                newWalls.push({
+                  id: generateId(),
+                  x1: path[i].x * ppi * ratio, y1: path[i].y * ppi * ratio,
+                  x2: path[i + 1].x * ppi * ratio, y2: path[i + 1].y * ppi * ratio,
+                });
+              }
+            });
+          }
+          if (data.portals) {
+            data.portals.forEach(portal => {
+              if (portal.closed && portal.bounds && portal.bounds.length > 1) {
+                const path = portal.bounds;
+                for (let i = 0; i < path.length - 1; i++) {
+                  newWalls.push({
+                    id: generateId(),
+                    x1: path[i].x * ppi * ratio, y1: path[i].y * ppi * ratio,
+                    x2: path[i + 1].x * ppi * ratio, y2: path[i + 1].y * ppi * ratio,
+                  });
+                }
+              }
+            });
+          }
+          newWalls.push(
+            { id: generateId(), x1: 0, y1: 0, x2: w, y2: 0 },
+            { id: generateId(), x1: w, y1: 0, x2: w, y2: h },
+            { id: generateId(), x1: w, y1: h, x2: 0, y2: h },
+            { id: generateId(), x1: 0, y1: h, x2: 0, y2: 0 }
+          );
+
+          const currentGrid = sessionData.gridConfig || {};
+          updateSession({
+            mapConfig: { src: imageUrl, width: w, height: h },
+            walls: newWalls,
+            tokens: playersOnly,
+            gridConfig: {
+              enabled: true,
+              size: Math.round(ppi * ratio),
+              color: currentGrid.color || '#ffffff',
+              opacity: currentGrid.opacity || 0.4,
+              offsetX: 0, offsetY: 0,
+            },
+          });
+          setScale(1);
+          setPan({ x: 0, y: 0 });
+        };
+        img.src = 'data:image/png;base64,' + data.image;
+      } catch (err) {
+        alert('Не удалось загрузить файл dd2vtt.');
+      }
+    };
+    reader.readAsText(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width; let h = img.height;
+        const max = 2048; let ratio = 1;
+        if (w > max || h > max) {
+          ratio = Math.min(max / w, max / h);
+          w = Math.floor(w * ratio);
+          h = Math.floor(h * ratio);
+        }
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const imageUrl = await uploadCanvasToStorage(canvas, 'maps');
+
+        let playerIndex = 0;
+        Object.values(playersOnly).forEach(p => {
+          p.x = w / 2 + ((playerIndex % 5) * 80 - 160);
+          p.y = h / 2 + Math.floor(playerIndex / 5) * 80;
+          playerIndex++;
+        });
+
+        const boundaryWalls = [
+          { id: generateId(), x1: 0, y1: 0, x2: w, y2: 0 },
+          { id: generateId(), x1: w, y1: 0, x2: w, y2: h },
+          { id: generateId(), x1: w, y1: h, x2: 0, y2: h },
+          { id: generateId(), x1: 0, y1: h, x2: 0, y2: 0 },
+        ];
+        updateSession({
+          mapConfig: { src: imageUrl, width: w, height: h },
+          walls: boundaryWalls,
+          tokens: playersOnly,
+        });
+        setScale(1);
+        setPan({ x: 0, y: 0 });
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  e.target.value = null;
+}, [sessionData, updateSession, setScale, setPan]);
+
 
   return {
     handleLeaveSession,
@@ -458,6 +595,6 @@ export function useSessionsAndScenes(params) {
     saveScene,
     loadScene,
     deleteScene,
-    // handleImageUpload: ...
+    handleImageUpload
   };
 }

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { socket, uploadCanvasToStorage } from '../services/socket';
 import { generateId } from '../utils/helpers';
+import { SERVER_URL } from '../services/socket';
+
 
 export function useAuth(updateSession, activeSessionId, localTokens) {
   const [accounts, setAccounts] = useState([]); 
@@ -56,46 +58,98 @@ export function useAuth(updateSession, activeSessionId, localTokens) {
     reader.readAsDataURL(file);
   };
 
-  const handleAuth = (e) => {
-    if (e && e.preventDefault) e.preventDefault();
-    const cleanUsername = username.trim(); 
-    const cleanPassword = password.trim();
-    
-    if (!cleanUsername || !cleanPassword) return alert('Введите логин и пароль!');
+  const handleAuth = async (e) => {
+  if (e && e.preventDefault) e.preventDefault();
+  const cleanUsername = username.trim();
+  const cleanPassword = password.trim();
 
-    if (authMode === 'register') {
-      if (accounts.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase())) return alert('Логин уже занят!');
-      
+  if (!cleanUsername || !cleanPassword) return alert('Введите логин и пароль!');
+
+  if (authMode === 'register') {
+    // Регистрация через новый эндпоинт
+    try {
       const initialCharId = generateId();
-      const newAcc = { 
-        id: generateId(), username: cleanUsername, password: cleanPassword, 
+      const newAcc = {
+        id: generateId(),
+        username: cleanUsername,
+        password: cleanPassword,
+        role: 'player',
         characters: [{
-           id: initialCharId, name: cleanUsername, image: regImage || null, ac: 10, 
-           stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0, tokenColor: '#3b82f6', tokenFrame: 'solid' },
-           attacks: [], inventory: '', abilities: ''
-        }]
+          id: initialCharId,
+          name: cleanUsername,
+          image: regImage || null,
+          ac: 10,
+          stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0, tokenColor: '#3b82f6', tokenFrame: 'solid' },
+          attacks: [],
+          inventory: '',
+          abilities: '',
+        }],
       };
-      
-      socket.emit('save_account', newAcc);
-      setCurrentUser(newAcc); setActiveCharId(initialCharId); setRegImage(null); setAuthStep('profile');
-    } else {
-      const acc = accounts.find(a => a.username.toLowerCase() === cleanUsername.toLowerCase() && a.password === cleanPassword);
-      if (acc) { 
-         if (!acc.characters || acc.characters.length === 0) {
-            const migratedChar = { 
-                id: generateId(), name: acc.username, image: acc.image || null, ac: acc.ac || 10, 
-                stats: acc.stats || { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0, tokenColor: '#3b82f6', tokenFrame: 'solid' }, 
-                attacks: [], inventory: acc.inventory || '', abilities: acc.abilities || '' 
-            };
-            acc.characters = [migratedChar];
-            socket.emit('save_account', acc);
-         }
-         setCurrentUser(acc); setActiveCharId(acc.characters[0].id); setRegImage(null); setAuthStep('profile'); 
-      } else {
-         alert('Неверные данные! Или аккаунт не найден.');
+
+      const res = await fetch(`${SERVER_URL}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAcc),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        return alert(err.error || 'Ошибка регистрации');
       }
+
+      const acc = await res.json();
+      setCurrentUser({ ...acc, characters: newAcc.characters });
+      setActiveCharId(initialCharId);
+      setRegImage(null);
+      setAuthStep('profile');
+    } catch (err) {
+      console.error('Ошибка регистрации:', err);
+      alert('Ошибка соединения с сервером');
     }
-  };
+
+  } else {
+    // Логин через новый эндпоинт
+    try {
+      const res = await fetch(`${SERVER_URL}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        return alert(err.error || 'Неверные данные');
+      }
+
+      const acc = await res.json();
+
+      // Миграция старых аккаунтов без персонажей
+      if (!acc.characters || acc.characters.length === 0) {
+        const migratedChar = {
+          id: generateId(),
+          name: acc.username,
+          image: null,
+          ac: 10,
+          stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0, tokenColor: '#3b82f6', tokenFrame: 'solid' },
+          attacks: [],
+          inventory: '',
+          abilities: '',
+        };
+        acc.characters = [migratedChar];
+        socket.emit('save_account', { ...acc, characters: [migratedChar] });
+      }
+
+      setCurrentUser(acc);
+      setActiveCharId(acc.characters[0].id);
+      setRegImage(null);
+      setAuthStep('profile');
+    } catch (err) {
+      console.error('Ошибка логина:', err);
+      alert('Ошибка соединения с сервером');
+    }
+  }
+};
+
 
   const startEditingProfile = () => {
     let parsedAbilities = [];
