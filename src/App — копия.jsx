@@ -36,32 +36,51 @@ import { socket, SERVER_URL, uploadCanvasToStorage } from './services/socket';
 import { useAuth } from './hooks/useAuth';
 import { useTokens } from './hooks/useTokens';
 import { useMap } from './hooks/useMap';
-import { useSession } from './providers/SessionProvider';
-
 
 
 export default function App() {
-  const {
-    dbStatus,
-    sessionsList,
-    activeSessionId,
-    setActiveSessionId,
-    sessionData,
-    setSessionData,
-    updateSession,
-    allScenes,
-    setAllScenes,
-  } = useSession();
-
+  // 1. БАЗОВЫЕ СОСТОЯНИЯ СЕССИИ
+  const [dbStatus, setDbStatus] = useState('connecting');
+  const [sessionsList, setSessionsList] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
   const [newSessionName, setNewSessionName] = useState('');
-  // ... дальше всё, как было
-
+  
+  const [sessionData, setSessionData] = useState({
+    isGameStarted: false, mapConfig: null, gridConfig: {}, tokens: {}, walls: [], diceLog: [], 
+    chatMessages: [], chatReadStates: {}, pings: [], readyPlayers: [], fogEnabled: true, 
+    combatState: { isActive: false, order: [], currentTurnIndex: 0 },
+    bgMusic: { videoId: null, isPlaying: false }, lighting: 'day'
+  });
 
   const [localTokens, setLocalTokens] = useState([]); 
 
-  
-
   // 2. ГЛОБАЛЬНАЯ ФУНКЦИЯ ОБНОВЛЕНИЯ (Мы перенесли её наверх)
+  const updateSession = useCallback((updates, overrideSessionId = null) => {
+    const targetId = overrideSessionId || activeSessionId;
+    if (!targetId) return;
+
+    setSessionData(prev => {
+      const nextState = { ...prev };
+      for (const key in updates) {
+        const val = updates[key];
+        if (key.includes('.')) {
+          const parts = key.split('.');
+          let curr = nextState;
+          for (let i = 0; i < parts.length - 1; i++) {
+            curr[parts[i]] = { ...curr[parts[i]] };
+            curr = curr[parts[i]];
+          }
+          if (val === DELETE_FIELD) delete curr[parts[parts.length - 1]];
+          else curr[parts[parts.length - 1]] = val;
+        } else {
+          if (val === DELETE_FIELD) delete nextState[key];
+          else nextState[key] = val;
+        }
+      }
+      socket.emit('update_session', { sessionId: targetId, updates: updates });
+      return nextState;
+    });
+  }, [activeSessionId]);
 
   // 3. ПОДКЛЮЧАЕМ НАШ НОВЫЙ ХУК АВТОРИЗАЦИИ
   const {
@@ -81,6 +100,8 @@ export default function App() {
   
   // Временное хранилище координат токена во время перетаскивания (чтобы не дергать state)
   const draggedTokenPosRef = useRef(null);
+
+  const [allScenes, setAllScenes] = useState([]);
   const [localVideoUrl, setLocalVideoUrl] = useState('');
   const [localVolume, setLocalVolume] = useState(20); 
   const [hideLocalGrid, setHideLocalGrid] = useState(false);
@@ -397,6 +418,23 @@ export default function App() {
     }
     return activeCharacter;
   }, [userRole, myTokenId, localTokens, activeCharacter]);
+
+  useEffect(() => {
+    socket.on('connect', () => setDbStatus('connected'));
+    socket.on('connect_error', () => setDbStatus('error'));
+    socket.emit('get_sessions', (data) => setSessionsList(data));
+    socket.emit('get_scenes', (data) => setAllScenes(data));
+
+    socket.on('sessions_updated', (data) => setSessionsList(data));
+    socket.on('scenes_updated', (data) => setAllScenes(data));
+
+    return () => {
+        socket.off('connect');
+        socket.off('connect_error');
+        socket.off('sessions_updated');
+        socket.off('scenes_updated');
+    };
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
