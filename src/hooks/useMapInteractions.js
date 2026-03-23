@@ -23,6 +23,9 @@ export function useMapInteractions({
   setWallDrawData,
   templateDrawData,
   setTemplateDrawData,
+  draggingTemplate,  
+  setDraggingTemplate,
+  activeWidgetCharacter,
 
   // камера
   pan,
@@ -503,8 +506,7 @@ export function useMapInteractions({
     ]
   );
 
-  const handlePointerUpBg = useCallback(
-    (e, { activeWidgetCharacter }) => {
+  const handlePointerUpBg = useCallback((e) => {
       if (templateDrawData) {
         const dist = Math.hypot(
           templateDrawData.currentX - templateDrawData.startX,
@@ -625,6 +627,7 @@ export function useMapInteractions({
       setLocalTokens,
       setWallDrawData,
       mapApiRef,
+      activeWidgetCharacter,
     ]
   );
 
